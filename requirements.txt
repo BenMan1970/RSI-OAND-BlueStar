@@ -1,5 +1,7 @@
+# Fichier: requirements.txt
+
 streamlit
 pandas
 numpy
-oandapyV20
+oanda-api-v20
 scipy
