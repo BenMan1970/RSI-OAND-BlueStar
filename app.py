@@ -14,15 +14,15 @@ warnings.filterwarnings('ignore')
 # --- Configuration de la page Streamlit ---
 st.set_page_config(
     page_title="RSI & Divergence Screener (OANDA)",
-    page_icon="📊", # Ou votre URL d'icône
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# --- CSS (Assurez-vous qu'il est bien présent) ---
+# --- CSS personnalisé (MODIFIÉ pour les nouvelles flèches) ---
 st.markdown("""
 <style>
-    /* ... (VOTRE CSS COMPLET ICI, il est essentiel) ... */
+    /* ... (VOTRE CSS PRÉCÉDENT EST CONSERVÉ) ... */
     /* Styles généraux */
     .main > div { padding-top: 2rem; }
     .screener-header { font-size: 28px; font-weight: bold; color: #FAFAFA; margin-bottom: 15px; text-align: center; }
@@ -40,7 +40,20 @@ st.markdown("""
     .oversold-cell { background-color: rgba(255, 75, 75, 0.7) !important; color: white !important; font-weight: bold; }
     .overbought-cell { background-color: rgba(61, 153, 112, 0.7) !important; color: white !important; font-weight: bold; }
     .neutral-cell { color: #C0C0C0 !important; background-color: #161A1D; }
-    .divergence-icon { font-size: 16px; vertical-align: middle; margin-left: 5px; }
+    
+    /* NOUVEAU: Styles pour les flèches de divergence */
+    .divergence-arrow {
+        font-size: 20px;
+        font-weight: bold;
+        vertical-align: middle;
+        margin-left: 6px;
+    }
+    .bullish-arrow {
+        color: #3D9970; /* Vert */
+    }
+    .bearish-arrow {
+        color: #FF4B4B; /* Rouge */
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -56,7 +69,7 @@ except KeyError:
     st.stop()
 
 
-# --- Fonctions de calcul et de récupération de données ---
+# --- Fonctions de calcul et de récupération de données (Inchangées) ---
 def calculate_rsi(prices, period=10):
     try:
         if prices is None or len(prices) < period + 1: return np.nan, None
@@ -116,7 +129,7 @@ FOREX_PAIRS = [ 'EUR/USD', 'USD/JPY', 'GBP/USD', 'USD/CHF', 'AUD/USD', 'USD/CAD'
 TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly']
 TIMEFRAMES_FETCH_KEYS = ['H1', 'H4', 'D1', 'W1']
 
-# --- Fonction principale d'analyse ---
+# --- Fonction principale d'analyse (Inchangée) ---
 def run_analysis_process():
     results_list = []
     total_calls = len(FOREX_PAIRS) * len(TIMEFRAMES_FETCH_KEYS)
@@ -160,17 +173,16 @@ if 'scan_done' not in st.session_state or not st.session_state.scan_done:
         run_analysis_process()
     st.success(f"✅ Analysis complete! {len(FOREX_PAIRS)} pairs analyzed.")
 
-# MODIFIÉ : Le code d'affichage est maintenant complet
 if 'results' in st.session_state and st.session_state.results:
     last_scan_time_str = st.session_state.last_scan_time.strftime("%Y-%m-%d %H:%M:%S")
     st.markdown(f"""<div class="update-info">🔄 Last update: {last_scan_time_str} (Data from OANDA)</div>""", unsafe_allow_html=True)
     
-    # --- Affichage de la légende ---
+    # MODIFIÉ : Mise à jour de la légende avec les nouvelles flèches
     st.markdown("""<div class="legend-container">
         <div class="legend-item"><div class="legend-dot oversold-dot"></div><span>Oversold (RSI ≤ 20)</span></div>
         <div class="legend-item"><div class="legend-dot overbought-dot"></div><span>Overbought (RSI ≥ 80)</span></div>
-        <div class="legend-item"><span class="divergence-icon">🐂</span><span>Bullish Divergence</span></div>
-        <div class="legend-item"><span class="divergence-icon">🐻</span><span>Bearish Divergence</span></div>
+        <div class="legend-item"><span class="divergence-arrow bullish-arrow">↑</span><span>Bullish Divergence</span></div>
+        <div class="legend-item"><span class="divergence-arrow bearish-arrow">↓</span><span>Bearish Divergence</span></div>
     </div>""", unsafe_allow_html=True)
 
     # --- Affichage du tableau de résultats ---
@@ -188,9 +200,14 @@ if 'results' in st.session_state and st.session_state.results:
             divergence = cell_data.get('divergence', 'Aucune')
             css_class = get_rsi_class(rsi_val)
             formatted_val = format_rsi(rsi_val)
+            
+            # MODIFIÉ : Utilisation des flèches au lieu des emojis
             divergence_icon = ""
-            if divergence == "Haussière": divergence_icon = '<span class="divergence-icon">🐂</span>'
-            elif divergence == "Baissière": divergence_icon = '<span class="divergence-icon">🐻</span>'
+            if divergence == "Haussière":
+                divergence_icon = '<span class="divergence-arrow bullish-arrow">↑</span>' # Flèche HAUT
+            elif divergence == "Baissière":
+                divergence_icon = '<span class="divergence-arrow bearish-arrow">↓</span>' # Flèche BAS
+                
             html_table += f'<td class="{css_class}">{formatted_val} {divergence_icon}</td>'
         html_table += '</tr>'
     html_table += '</tbody></table>'
@@ -209,8 +226,13 @@ if 'results' in st.session_state and st.session_state.results:
             oversold_count = sum(1 for x in valid_rsi_values if x <= 20)
             overbought_count = sum(1 for x in valid_rsi_values if x >= 80)
             total_signals = oversold_count + overbought_count + bullish_div_count + bearish_div_count
-            delta_text = f"🔴 {oversold_count} S | 🟢 {overbought_count} B | 🐂 {bullish_div_count} | 🐻 {bearish_div_count}"
-            with stat_cols[i]: st.metric(label=f"Signals {tf_display_name}", value=str(total_signals), delta=delta_text, delta_color="off")
+            
+            # MODIFIÉ : Mise à jour du delta avec les nouvelles flèches
+            delta_text = f"🔴 {oversold_count} S | 🟢 {overbought_count} B | <span class='bullish-arrow'>↑</span> {bullish_div_count} | <span class='bearish-arrow'>↓</span> {bearish_div_count}"
+            
+            with stat_cols[i]:
+                st.metric(label=f"Signals {tf_display_name}", value=str(total_signals))
+                st.markdown(delta_text, unsafe_allow_html=True) # Utiliser markdown pour afficher les flèches stylisées
         else:
             with stat_cols[i]: st.metric(label=f"Signals {tf_display_name}", value="N/A", delta="No data")
 
