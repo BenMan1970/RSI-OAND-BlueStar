@@ -5,22 +5,18 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import warnings
-# MODIFIÉ: Le nom du module importé est différent du nom d'installation
-import oanda_api_v20 as oanda
-from oanda_api_v20 import API
-import oanda_api_v20.endpoints.instruments as instruments
+# MODIFIÉ: Importation de la bibliothèque stable oandapyV20
+from oandapyV20 import API
+import oandapyV20.endpoints.instruments as instruments
 from scipy.signal import find_peaks
 
 warnings.filterwarnings('ignore')
 
 # --- Configuration de la page Streamlit ---
-# MODIFIÉ: Ajout d'une icône personnalisée.
-# REMPLACEZ L'URL PAR LE LIEN "RAW" DE VOTRE PROPRE ICÔNE SUR GITHUB
-ICON_URL = "https://raw.githubusercontent.com/arnaudXYZ/RSI-Divergence-Screener/main/icon.png" # Exemple, à remplacer
-
+# Laissez votre configuration ici, elle est correcte
 st.set_page_config(
     page_title="RSI & Divergence Screener (OANDA)",
-    page_icon=ICON_URL,
+    page_icon="📊", # Ou votre URL d'icône
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -32,10 +28,6 @@ st.markdown("""<style> /* ... VOTRE CSS COMPLET ICI ... */ </style>""", unsafe_a
 try:
     OANDA_ACCOUNT_ID = st.secrets["oanda_account_id"]
     OANDA_ACCESS_TOKEN = st.secrets["oanda_access_token"]
-    api_context = {
-        "id": OANDA_ACCOUNT_ID,
-        "token": OANDA_ACCESS_TOKEN
-    }
 except KeyError:
     st.error("🔑 Secrets OANDA non trouvés !")
     st.info("Veuillez ajouter votre ID de compte et token d'accès dans les 'Secrets' de l'application.")
@@ -74,11 +66,11 @@ def detect_divergence(price_data, rsi_series, lookback=30, peak_distance=5):
         return "Haussière"
     return "Aucune"
 
-# --- Fonction de récupération des données OANDA ---
+# --- Fonction de récupération des données OANDA (le code interne ne change pas) ---
 @st.cache_data(ttl=600, show_spinner=False)
-def fetch_forex_data_oanda(pair, timeframe_key, context):
+def fetch_forex_data_oanda(pair, timeframe_key):
     try:
-        api = API(access_token=context["token"], environment="practice")
+        api = API(access_token=OANDA_ACCESS_TOKEN, environment="practice")
         instrument = pair.replace('/', '_')
         params = {'granularity': {'H1':'H1', 'H4':'H4', 'D1':'D', 'W1':'W'}[timeframe_key], 'count': 100}
         r = instruments.InstrumentsCandles(instrument=instrument, params=params)
@@ -92,6 +84,9 @@ def fetch_forex_data_oanda(pair, timeframe_key, context):
     except Exception:
         return None
 
+# --- Le reste du code est inchangé ---
+# ... (copiez le reste de votre code ici, de `format_rsi` jusqu'à la fin)
+
 def format_rsi(value): return "N/A" if pd.isna(value) else f"{value:.2f}"
 def get_rsi_class(value):
     if pd.isna(value): return "neutral-cell"
@@ -99,13 +94,11 @@ def get_rsi_class(value):
     elif value >= 80: return "overbought-cell"
     return "neutral-cell"
 
-# --- Constantes ---
 FOREX_PAIRS = [ 'EUR/USD', 'USD/JPY', 'GBP/USD', 'USD/CHF', 'AUD/USD', 'USD/CAD', 'NZD/USD', 'EUR/JPY', 'GBP/JPY', 'AUD/JPY', 'NZD/JPY', 'CAD/JPY', 'CHF/JPY', 'EUR/GBP', 'EUR/AUD', 'EUR/CAD', 'EUR/NZD', 'EUR/CHF' ]
 TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly']
 TIMEFRAMES_FETCH_KEYS = ['H1', 'H4', 'D1', 'W1']
 
-# --- Fonction principale d'analyse ---
-def run_analysis_process(context):
+def run_analysis_process():
     results_list = []
     total_calls = len(FOREX_PAIRS) * len(TIMEFRAMES_FETCH_KEYS)
     progress_widget = st.progress(0)
@@ -117,7 +110,7 @@ def run_analysis_process(context):
         for tf_key, tf_display_name in zip(TIMEFRAMES_FETCH_KEYS, TIMEFRAMES_DISPLAY):
             call_count += 1
             status_widget.text(f"Scanning: {pair_name} on {tf_display_name} ({call_count}/{total_calls})")
-            data_ohlc = fetch_forex_data_oanda(pair_name, tf_key, context)
+            data_ohlc = fetch_forex_data_oanda(pair_name, tf_key)
             rsi_value, rsi_series = calculate_rsi(data_ohlc, period=10)
             divergence_signal = "Aucune"
             if data_ohlc is not None and rsi_series is not None:
@@ -133,7 +126,6 @@ def run_analysis_process(context):
     status_widget.empty()
     progress_widget.empty()
 
-# --- Interface Utilisateur ---
 st.markdown('<h1 class="screener-header">Screener RSI & Divergence (OANDA)</h1>', unsafe_allow_html=True)
 
 col1, col2, col3 = st.columns([1, 2, 1])
@@ -145,14 +137,13 @@ with col2:
 
 if 'scan_done' not in st.session_state or not st.session_state.scan_done:
     with st.spinner("🚀 Performing high-speed scan with OANDA..."):
-        run_analysis_process(api_context)
+        run_analysis_process()
     st.success(f"✅ Analysis complete! {len(FOREX_PAIRS)} pairs analyzed.")
 
 if 'results' in st.session_state and st.session_state.results:
     last_scan_time_str = st.session_state.last_scan_time.strftime("%Y-%m-%d %H:%M:%S")
     st.markdown(f"""<div class="update-info">🔄 Last update: {last_scan_time_str} (Data from OANDA)</div>""", unsafe_allow_html=True)
-    
     # L'affichage de la légende, du tableau et des stats reste identique.
-    # ...
+    # ... Collez votre code d'affichage ici si nécessaire ...
 
 # --- END OF FILE app.py ---
