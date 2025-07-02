@@ -121,7 +121,7 @@ FOREX_PAIRS = [ 'EUR/USD', 'USD/JPY', 'GBP/USD', 'USD/CHF', 'AUD/USD', 'USD/CAD'
 TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly']
 TIMEFRAMES_FETCH_KEYS = ['H1', 'H4', 'D1', 'W1']
 
-### AJOUT : FONCTION AMÉLIORÉE DE CRÉATION D'IMAGE AVEC COULEURS ###
+### AJOUT : FONCTION AMÉLIORÉE DE CRÉATION D'IMAGE AVEC COULEURS (CORRIGÉE) ###
 def create_image_report_with_colors(results_data, report_title):
     # Paramètres
     padding = 25
@@ -136,8 +136,9 @@ def create_image_report_with_colors(results_data, report_title):
         font = font_bold = ImageFont.load_default()
 
     # Couleurs
+    ### CORRECTION : Clé 'Bearish' remplacée par 'Baissière' ###
     colors = {
-        "Oversold": "#FF4B4B", "Bearish": "#FF4B4B", # Rouge
+        "Oversold": "#FF4B4B", "Baissière": "#FF4B4B", # Rouge
         "Overbought": "#3D9970", "Haussière": "#3D9970", # Vert
         "default": "black"
     }
