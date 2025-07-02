@@ -8,6 +8,10 @@ import warnings
 from oandapyV20 import API
 import oandapyV20.endpoints.instruments as instruments
 from scipy.signal import find_peaks
+from io import BytesIO
+
+### AJOUT : L'UNIQUE IMPORT NÉCESSAIRE POUR L'IMAGE ###
+from PIL import Image, ImageDraw, ImageFont
 
 warnings.filterwarnings('ignore')
 
@@ -19,11 +23,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- CSS personnalisé (MODIFIÉ pour les nouvelles flèches) ---
+# --- CSS personnalisé (inchangé) ---
 st.markdown("""
 <style>
     /* ... (VOTRE CSS PRÉCÉDENT EST CONSERVÉ) ... */
-    /* Styles généraux */
     .main > div { padding-top: 2rem; }
     .screener-header { font-size: 28px; font-weight: bold; color: #FAFAFA; margin-bottom: 15px; text-align: center; }
     .update-info { background-color: #262730; padding: 8px 15px; border-radius: 5px; margin-bottom: 20px; font-size: 14px; color: #A9A9A9; border: 1px solid #333A49; text-align: center; }
@@ -40,25 +43,14 @@ st.markdown("""
     .oversold-cell { background-color: rgba(255, 75, 75, 0.7) !important; color: white !important; font-weight: bold; }
     .overbought-cell { background-color: rgba(61, 153, 112, 0.7) !important; color: white !important; font-weight: bold; }
     .neutral-cell { color: #C0C0C0 !important; background-color: #161A1D; }
-    
-    /* NOUVEAU: Styles pour les flèches de divergence */
-    .divergence-arrow {
-        font-size: 20px;
-        font-weight: bold;
-        vertical-align: middle;
-        margin-left: 6px;
-    }
-    .bullish-arrow {
-        color: #3D9970; /* Vert */
-    }
-    .bearish-arrow {
-        color: #FF4B4B; /* Rouge */
-    }
+    .divergence-arrow { font-size: 20px; font-weight: bold; vertical-align: middle; margin-left: 6px; }
+    .bullish-arrow { color: #3D9970; }
+    .bearish-arrow { color: #FF4B4B; }
 </style>
 """, unsafe_allow_html=True)
 
 
-# --- Accès aux secrets OANDA ---
+# --- Accès aux secrets OANDA (inchangé) ---
 try:
     OANDA_ACCOUNT_ID = st.secrets["OANDA_ACCOUNT_ID"]
     OANDA_ACCESS_TOKEN = st.secrets["OANDA_ACCESS_TOKEN"]
@@ -129,6 +121,34 @@ FOREX_PAIRS = [ 'EUR/USD', 'USD/JPY', 'GBP/USD', 'USD/CHF', 'AUD/USD', 'USD/CAD'
 TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly']
 TIMEFRAMES_FETCH_KEYS = ['H1', 'H4', 'D1', 'W1']
 
+### AJOUT : FONCTION FIABLE DE CRÉATION D'IMAGE ###
+def create_simple_image_report(dataframe, report_title):
+    """Crée une image simple à partir du texte d'un DataFrame."""
+    
+    report_text = report_title + "\n" + ("-" * len(report_title)) + "\n"
+    report_text += dataframe.to_string(index=False) if not dataframe.empty else "Aucune donnée."
+
+    try:
+        font = ImageFont.truetype("DejaVuSansMono.ttf", 12)
+    except IOError:
+        font = ImageFont.load_default()
+
+    temp_img = Image.new('RGB', (1, 1))
+    temp_draw = ImageDraw.Draw(temp_img)
+    text_bbox = temp_draw.multiline_textbbox((0, 0), report_text, font=font)
+    
+    padding = 20
+    width = text_bbox[2] + 2 * padding
+    height = text_bbox[3] + 2 * padding
+    
+    img = Image.new('RGB', (width, height), color='white')
+    draw = ImageDraw.Draw(img)
+    draw.multiline_text((padding, padding), report_text, font=font, fill='black')
+    
+    output_buffer = BytesIO()
+    img.save(output_buffer, format="PNG")
+    return output_buffer.getvalue()
+
 # --- Fonction principale d'analyse (Inchangée) ---
 def run_analysis_process():
     results_list = []
@@ -177,7 +197,6 @@ if 'results' in st.session_state and st.session_state.results:
     last_scan_time_str = st.session_state.last_scan_time.strftime("%Y-%m-%d %H:%M:%S")
     st.markdown(f"""<div class="update-info">🔄 Last update: {last_scan_time_str} (Data from OANDA)</div>""", unsafe_allow_html=True)
     
-    # MODIFIÉ : Mise à jour de la légende avec les nouvelles flèches
     st.markdown("""<div class="legend-container">
         <div class="legend-item"><div class="legend-dot oversold-dot"></div><span>Oversold (RSI ≤ 20)</span></div>
         <div class="legend-item"><div class="legend-dot overbought-dot"></div><span>Overbought (RSI ≥ 80)</span></div>
@@ -200,20 +219,52 @@ if 'results' in st.session_state and st.session_state.results:
             divergence = cell_data.get('divergence', 'Aucune')
             css_class = get_rsi_class(rsi_val)
             formatted_val = format_rsi(rsi_val)
-            
-            # MODIFIÉ : Utilisation des flèches au lieu des emojis
             divergence_icon = ""
             if divergence == "Haussière":
-                divergence_icon = '<span class="divergence-arrow bullish-arrow">↑</span>' # Flèche HAUT
+                divergence_icon = '<span class="divergence-arrow bullish-arrow">↑</span>'
             elif divergence == "Baissière":
-                divergence_icon = '<span class="divergence-arrow bearish-arrow">↓</span>' # Flèche BAS
-                
+                divergence_icon = '<span class="divergence-arrow bearish-arrow">↓</span>'
             html_table += f'<td class="{css_class}">{formatted_val} {divergence_icon}</td>'
         html_table += '</tr>'
     html_table += '</tbody></table>'
     st.markdown(html_table, unsafe_allow_html=True)
+    
+    ### AJOUT : SECTION DE TÉLÉCHARGEMENT D'IMAGE ###
+    st.divider()
 
-    # --- Affichage des statistiques ---
+    # 1. Préparer un DataFrame propre pour l'exportation
+    rows_for_df = []
+    for item in st.session_state.results:
+        row = {'Devises': item['Devises']}
+        for tf_name in TIMEFRAMES_DISPLAY:
+            rsi = item.get(tf_name, {}).get('rsi')
+            div = item.get(tf_name, {}).get('divergence', 'Aucune')
+            
+            rsi_str = f"{rsi:.2f}" if pd.notna(rsi) else "N/A"
+            
+            div_char = ""
+            if div == "Haussière": div_char = " ^"  # Flèche simple pour texte
+            elif div == "Baissière": div_char = " v" # Flèche simple pour texte
+            
+            row[tf_name] = f"{rsi_str}{div_char}"
+        rows_for_df.append(row)
+    
+    df_for_export = pd.DataFrame(rows_for_df)
+
+    # 2. Générer l'image en mémoire
+    image_bytes = create_simple_image_report(df_for_export, "Screener RSI & Divergence")
+    
+    # 3. Afficher le bouton de téléchargement
+    st.download_button(
+        label="🖼️ Télécharger les résultats (Image)",
+        data=image_bytes,
+        file_name=f"rsi_screener_{datetime.now().strftime('%Y%m%d_%H%M')}.png",
+        mime='image/png',
+        use_container_width=True
+    )
+    ### FIN DE L'AJOUT ###
+
+    # --- Affichage des statistiques (inchangé) ---
     st.markdown("### 📊 Signal Statistics")
     stat_cols = st.columns(len(TIMEFRAMES_DISPLAY))
     for i, tf_display_name in enumerate(TIMEFRAMES_DISPLAY):
@@ -226,17 +277,14 @@ if 'results' in st.session_state and st.session_state.results:
             oversold_count = sum(1 for x in valid_rsi_values if x <= 20)
             overbought_count = sum(1 for x in valid_rsi_values if x >= 80)
             total_signals = oversold_count + overbought_count + bullish_div_count + bearish_div_count
-            
-            # MODIFIÉ : Mise à jour du delta avec les nouvelles flèches
             delta_text = f"🔴 {oversold_count} S | 🟢 {overbought_count} B | <span class='bullish-arrow'>↑</span> {bullish_div_count} | <span class='bearish-arrow'>↓</span> {bearish_div_count}"
-            
             with stat_cols[i]:
                 st.metric(label=f"Signals {tf_display_name}", value=str(total_signals))
-                st.markdown(delta_text, unsafe_allow_html=True) # Utiliser markdown pour afficher les flèches stylisées
+                st.markdown(delta_text, unsafe_allow_html=True)
         else:
             with stat_cols[i]: st.metric(label=f"Signals {tf_display_name}", value="N/A", delta="No data")
 
-# --- Guide Utilisateur et Footer ---
+# --- Guide Utilisateur et Footer (inchangé) ---
 with st.expander("ℹ️ User Guide & Configuration", expanded=False):
     st.markdown("""
     ## Data Source: OANDA
@@ -247,5 +295,3 @@ with st.expander("ℹ️ User Guide & Configuration", expanded=False):
     - **Divergence**: Checks for regular bullish/bearish divergences on the last 30 candles.
     """)
 st.markdown("<div class='footer'>*Data provided by OANDA*</div>", unsafe_allow_html=True)
-
-# --- END OF FILE app.py ---
