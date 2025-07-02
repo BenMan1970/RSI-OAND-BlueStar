@@ -121,30 +121,103 @@ FOREX_PAIRS = [ 'EUR/USD', 'USD/JPY', 'GBP/USD', 'USD/CHF', 'AUD/USD', 'USD/CAD'
 TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly']
 TIMEFRAMES_FETCH_KEYS = ['H1', 'H4', 'D1', 'W1']
 
-### AJOUT : FONCTION FIABLE DE CRÉATION D'IMAGE ###
-def create_simple_image_report(dataframe, report_title):
-    """Crée une image simple à partir du texte d'un DataFrame."""
+### AJOUT : FONCTION AMÉLIORÉE DE CRÉATION D'IMAGE AVEC COULEURS ###
+def create_image_report_with_colors(results_data, report_title):
+    # Paramètres
+    padding = 25
+    line_height = 28
+    column_padding = 30
     
-    report_text = report_title + "\n" + ("-" * len(report_title)) + "\n"
-    report_text += dataframe.to_string(index=False) if not dataframe.empty else "Aucune donnée."
-
+    # Polices
     try:
-        font = ImageFont.truetype("DejaVuSansMono.ttf", 12)
+        font = ImageFont.truetype("DejaVuSansMono.ttf", 15)
+        font_bold = ImageFont.truetype("DejaVuSansMono-Bold.ttf", 16)
     except IOError:
-        font = ImageFont.load_default()
+        font = font_bold = ImageFont.load_default()
 
-    temp_img = Image.new('RGB', (1, 1))
-    temp_draw = ImageDraw.Draw(temp_img)
-    text_bbox = temp_draw.multiline_textbbox((0, 0), report_text, font=font)
+    # Couleurs
+    colors = {
+        "Oversold": "#FF4B4B", "Bearish": "#FF4B4B", # Rouge
+        "Overbought": "#3D9970", "Haussière": "#3D9970", # Vert
+        "default": "black"
+    }
     
-    padding = 20
-    width = text_bbox[2] + 2 * padding
-    height = text_bbox[3] + 2 * padding
+    # 1. Préparer un DataFrame propre pour le calcul des largeurs
+    rows_for_df = []
+    for item in results_data:
+        row = {'Devises': item['Devises']}
+        for tf_name in TIMEFRAMES_DISPLAY:
+            rsi = item.get(tf_name, {}).get('rsi')
+            div = item.get(tf_name, {}).get('divergence', 'Aucune')
+            rsi_str = f"{rsi:.2f}" if pd.notna(rsi) else "N/A"
+            div_char = ""
+            if div == "Haussière": div_char = " ↑"
+            elif div == "Baissière": div_char = " ↓"
+            row[tf_name] = f"{rsi_str}{div_char}"
+        rows_for_df.append(row)
+    df_for_drawing = pd.DataFrame(rows_for_df)
     
-    img = Image.new('RGB', (width, height), color='white')
+    # 2. Calculer les largeurs de colonnes
+    col_widths = {}
+    all_columns = ['Devises'] + TIMEFRAMES_DISPLAY
+    for col in all_columns:
+        header_width = font_bold.getbbox(col)[2]
+        max_data_width = max([font.getbbox(str(x))[2] for x in df_for_drawing[col]]) if not df_for_drawing.empty else 0
+        col_widths[col] = max(header_width, max_data_width) + column_padding
+
+    total_width = sum(col_widths.values()) + padding
+    total_height = (len(df_for_drawing) + 2) * line_height + 2 * padding
+
+    # 3. Créer l'image et dessiner
+    img = Image.new('RGB', (int(total_width), int(total_height)), color='white')
     draw = ImageDraw.Draw(img)
-    draw.multiline_text((padding, padding), report_text, font=font, fill='black')
     
+    # Titre
+    title_width = font_bold.getbbox(report_title)[2]
+    draw.text(((total_width - title_width) / 2, padding), report_title, font=font_bold, fill=colors['default'])
+    
+    # En-têtes
+    current_x = padding
+    current_y = padding + line_height * 1.5
+    for col in all_columns:
+        draw.text((current_x, current_y), col, font=font_bold, fill=colors['default'])
+        current_x += col_widths[col]
+
+    # Données
+    for item in results_data:
+        current_x = padding
+        current_y += line_height
+        
+        # Colonne Devises
+        draw.text((current_x, current_y), item['Devises'], font=font, fill=colors['default'])
+        current_x += col_widths['Devises']
+
+        # Autres colonnes
+        for tf_name in TIMEFRAMES_DISPLAY:
+            rsi = item.get(tf_name, {}).get('rsi')
+            div = item.get(tf_name, {}).get('divergence', 'Aucune')
+            
+            # Déterminer le texte et la couleur
+            rsi_str = f"{rsi:.2f}" if pd.notna(rsi) else "N/A"
+            div_char = ""
+            color = colors['default']
+            
+            if pd.notna(rsi):
+                if rsi <= 20: color = colors['Oversold']
+                elif rsi >= 80: color = colors['Overbought']
+
+            if div == "Haussière":
+                div_char = " ↑"
+                color = colors['Haussière']
+            elif div == "Baissière":
+                div_char = " ↓"
+                color = colors['Baissière']
+
+            text = f"{rsi_str}{div_char}"
+            draw.text((current_x, current_y), text, font=font, fill=color)
+            current_x += col_widths[tf_name]
+
+    # 4. Sauvegarder
     output_buffer = BytesIO()
     img.save(output_buffer, format="PNG")
     return output_buffer.getvalue()
@@ -204,7 +277,7 @@ if 'results' in st.session_state and st.session_state.results:
         <div class="legend-item"><span class="divergence-arrow bearish-arrow">↓</span><span>Bearish Divergence</span></div>
     </div>""", unsafe_allow_html=True)
 
-    # --- Affichage du tableau de résultats ---
+    # --- Affichage du tableau de résultats (inchangé)---
     st.markdown("### 📈 RSI & Divergence Analysis Results")
     html_table = '<table class="rsi-table">'
     html_table += '<thead><tr><th>Devises</th>'
@@ -229,32 +302,12 @@ if 'results' in st.session_state and st.session_state.results:
     html_table += '</tbody></table>'
     st.markdown(html_table, unsafe_allow_html=True)
     
-    ### AJOUT : SECTION DE TÉLÉCHARGEMENT D'IMAGE ###
+    ### AJOUT : SECTION DE TÉLÉCHARGEMENT D'IMAGE (MAINTENANT AVEC COULEURS) ###
     st.divider()
 
-    # 1. Préparer un DataFrame propre pour l'exportation
-    rows_for_df = []
-    for item in st.session_state.results:
-        row = {'Devises': item['Devises']}
-        for tf_name in TIMEFRAMES_DISPLAY:
-            rsi = item.get(tf_name, {}).get('rsi')
-            div = item.get(tf_name, {}).get('divergence', 'Aucune')
-            
-            rsi_str = f"{rsi:.2f}" if pd.notna(rsi) else "N/A"
-            
-            div_char = ""
-            if div == "Haussière": div_char = " ^"  # Flèche simple pour texte
-            elif div == "Baissière": div_char = " v" # Flèche simple pour texte
-            
-            row[tf_name] = f"{rsi_str}{div_char}"
-        rows_for_df.append(row)
+    # Générer l'image en mémoire avec la nouvelle fonction améliorée
+    image_bytes = create_image_report_with_colors(st.session_state.results, "Screener RSI & Divergence")
     
-    df_for_export = pd.DataFrame(rows_for_df)
-
-    # 2. Générer l'image en mémoire
-    image_bytes = create_simple_image_report(df_for_export, "Screener RSI & Divergence")
-    
-    # 3. Afficher le bouton de téléchargement
     st.download_button(
         label="🖼️ Télécharger les résultats (Image)",
         data=image_bytes,
