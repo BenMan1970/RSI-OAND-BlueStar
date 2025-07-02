@@ -1,5 +1,6 @@
 streamlit
 pandas
 numpy
-oandapyV20
 scipy
+oandapyV20
+Pillow
