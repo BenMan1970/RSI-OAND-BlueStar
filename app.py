@@ -8,7 +8,7 @@ import warnings
 from oandapyV20 import API
 import oandapyV20.endpoints.instruments as instruments
 from scipy.signal import find_peaks
-from fpdf import FPDF # Pour la génération de rapports PDF
+from fpdf import FPDF
 
 warnings.filterwarnings('ignore')
 
@@ -209,8 +209,8 @@ def create_pdf_report(results_data, last_scan_time):
             pdf.cell(cell_width_tf, 10, cell_text, 1, 0, 'C', True)
         pdf.ln()
 
-    # CORRECTION N°1 : Supprimer l'appel .encode()
-    return pdf.output()
+    # ### CORRECTION FINALE ### Convertir le bytearray en bytes
+    return bytes(pdf.output())
 
 
 # --- Interface Utilisateur ---
@@ -228,7 +228,6 @@ with col2:
         st.cache_data.clear()
         st.rerun()
 
-# CORRECTION N°2 : Déplacer l'appel de la fonction dans le bouton de téléchargement
 with col3:
     if 'results' in st.session_state and st.session_state.results:
         st.download_button(
