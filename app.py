@@ -8,6 +8,7 @@ import warnings
 from oandapyV20 import API
 import oandapyV20.endpoints.instruments as instruments
 from scipy.signal import find_peaks
+from fpdf import FPDF ### NOUVEAU ### : Importation pour la génération de PDF
 
 warnings.filterwarnings('ignore')
 
@@ -19,7 +20,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- CSS personnalisé (MODIFIÉ pour les nouvelles flèches) ---
+# --- CSS personnalisé (Inchangé) ---
 st.markdown("""
 <style>
     /* ... (VOTRE CSS PRÉCÉDENT EST CONSERVÉ) ... */
@@ -58,7 +59,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- Accès aux secrets OANDA ---
+# --- Accès aux secrets OANDA (Inchangé) ---
 try:
     OANDA_ACCOUNT_ID = st.secrets["OANDA_ACCOUNT_ID"]
     OANDA_ACCESS_TOKEN = st.secrets["OANDA_ACCESS_TOKEN"]
@@ -124,7 +125,7 @@ def get_rsi_class(value):
     elif value >= 80: return "overbought-cell"
     return "neutral-cell"
 
-# --- Constantes ---
+# --- Constantes (Inchangées) ---
 FOREX_PAIRS = [ 'EUR/USD', 'USD/JPY', 'GBP/USD', 'USD/CHF', 'AUD/USD', 'USD/CAD', 'NZD/USD', 'EUR/JPY', 'GBP/JPY', 'AUD/JPY', 'NZD/JPY', 'CAD/JPY', 'CHF/JPY', 'EUR/GBP', 'EUR/AUD', 'EUR/CAD', 'EUR/NZD', 'EUR/CHF' ]
 TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly']
 TIMEFRAMES_FETCH_KEYS = ['H1', 'H4', 'D1', 'W1']
@@ -158,26 +159,123 @@ def run_analysis_process():
     status_widget.empty()
     progress_widget.empty()
 
+# ### NOUVEAU ### : Fonction de création du rapport PDF
+def create_pdf_report(results_data, last_scan_time):
+    class PDF(FPDF):
+        def header(self):
+            self.set_font('Arial', 'B', 14)
+            self.cell(0, 10, 'Rapport Screener RSI & Divergence', 0, 1, 'C')
+            self.set_font('Arial', '', 8)
+            self.cell(0, 5, f'Généré le: {last_scan_time}', 0, 1, 'C')
+            self.ln(5)
+
+        def footer(self):
+            self.set_y(-15)
+            self.set_font('Arial', 'I', 8)
+            self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+    pdf = PDF(orientation='L', unit='mm', format='A4') # L for landscape
+    pdf.add_page()
+    
+    # Couleurs (RGB)
+    color_header_bg = (51, 58, 73)
+    color_text_light = (234, 234, 234)
+    color_oversold_bg = (255, 75, 75)
+    color_overbought_bg = (61, 153, 112)
+    color_neutral_bg = (22, 26, 29)
+    color_neutral_text = (192, 192, 192)
+
+    # Entête du tableau
+    pdf.set_font('Arial', 'B', 10)
+    pdf.set_fill_color(*color_header_bg)
+    pdf.set_text_color(*color_text_light)
+    cell_width_pair = 50
+    cell_width_tf = (pdf.w - pdf.l_margin - pdf.r_margin - cell_width_pair) / len(TIMEFRAMES_DISPLAY)
+    pdf.cell(cell_width_pair, 10, 'Devises', 1, 0, 'C', True)
+    for tf in TIMEFRAMES_DISPLAY:
+        pdf.cell(cell_width_tf, 10, tf, 1, 0, 'C', True)
+    pdf.ln()
+
+    # Corps du tableau
+    pdf.set_font('Arial', '', 9)
+    for row in results_data:
+        # Cellule de la devise
+        pdf.set_fill_color(*color_neutral_bg)
+        pdf.set_text_color(*color_text_light)
+        pdf.cell(cell_width_pair, 10, row['Devises'], 1, 0, 'L', True)
+        
+        # Cellules des timeframes
+        for tf_display_name in TIMEFRAMES_DISPLAY:
+            cell_data = row.get(tf_display_name, {'rsi': np.nan, 'divergence': 'Aucune'})
+            rsi_val = cell_data.get('rsi', np.nan)
+            divergence = cell_data.get('divergence', 'Aucune')
+            
+            # Définir la couleur de fond et du texte
+            if pd.notna(rsi_val):
+                if rsi_val <= 20: pdf.set_fill_color(*color_oversold_bg); pdf.set_text_color(255, 255, 255)
+                elif rsi_val >= 80: pdf.set_fill_color(*color_overbought_bg); pdf.set_text_color(255, 255, 255)
+                else: pdf.set_fill_color(*color_neutral_bg); pdf.set_text_color(*color_neutral_text)
+            else:
+                pdf.set_fill_color(*color_neutral_bg); pdf.set_text_color(*color_neutral_text)
+            
+            # Formater le texte de la cellule
+            formatted_val = format_rsi(rsi_val)
+            divergence_text = ""
+            if divergence == "Haussière": divergence_text = " (BULL)"
+            elif divergence == "Baissière": divergence_text = " (BEAR)"
+            
+            cell_text = f"{formatted_val}{divergence_text}"
+            pdf.cell(cell_width_tf, 10, cell_text, 1, 0, 'C', True)
+        pdf.ln()
+
+    return pdf.output(dest='S').encode('latin-1')
+
+
 # --- Interface Utilisateur ---
 st.markdown('<h1 class="screener-header">Screener RSI & Divergence (OANDA)</h1>', unsafe_allow_html=True)
 
-col1, col2, col3 = st.columns([1, 2, 1])
+# ### MODIFIÉ ### : Nouveaux boutons d'action en haut de la page
+if 'scan_done' in st.session_state and st.session_state.scan_done:
+    last_scan_time_str = st.session_state.last_scan_time.strftime("%Y-%m-%d %H:%M:%S")
+    st.markdown(f"""<div class="update-info">🔄 Dernière mise à jour : {last_scan_time_str} (Données OANDA)</div>""", unsafe_allow_html=True)
+
+col1, col2, col3 = st.columns([4, 1, 1]) # Création de colonnes pour les boutons
+
 with col2:
-    if st.button("🔄 Rescan All Forex Pairs", key="rescan_button", use_container_width=True):
+    if st.button("🔄 Rescan", use_container_width=True):
         st.session_state.scan_done = False
         st.cache_data.clear()
         st.rerun()
 
+with col3:
+    if 'results' in st.session_state and st.session_state.results:
+        pdf_data = create_pdf_report(st.session_state.results, st.session_state.last_scan_time.strftime("%d/%m/%Y %H:%M:%S"))
+        st.download_button(
+            label="📄 Exporter en PDF",
+            data=pdf_data,
+            file_name=f"RSI_Screener_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+# Logique de scan initiale
 if 'scan_done' not in st.session_state or not st.session_state.scan_done:
-    with st.spinner("🚀 Performing high-speed scan with OANDA..."):
-        run_analysis_process()
-    st.success(f"✅ Analysis complete! {len(FOREX_PAIRS)} pairs analyzed.")
+    # Affiche le bouton de scan initial si aucun scan n'a encore été fait
+    if st.button("🚀 Lancer le premier scan", use_container_width=True):
+        with st.spinner("🚀 Performing high-speed scan with OANDA..."):
+            run_analysis_process()
+        st.success(f"✅ Analysis complete! {len(FOREX_PAIRS)} pairs analyzed.")
+        st.rerun()
+    # Logique pour le cas où le scan est déclenché par le bouton rescan
+    elif 'scan_done' in st.session_state and not st.session_state.scan_done:
+         with st.spinner("🚀 Performing high-speed scan with OANDA..."):
+            run_analysis_process()
+         st.success(f"✅ Analysis complete! {len(FOREX_PAIRS)} pairs analyzed.")
+         st.rerun()
+
 
 if 'results' in st.session_state and st.session_state.results:
-    last_scan_time_str = st.session_state.last_scan_time.strftime("%Y-%m-%d %H:%M:%S")
-    st.markdown(f"""<div class="update-info">🔄 Last update: {last_scan_time_str} (Data from OANDA)</div>""", unsafe_allow_html=True)
-    
-    # MODIFIÉ : Mise à jour de la légende avec les nouvelles flèches
+    # Légende (inchangée)
     st.markdown("""<div class="legend-container">
         <div class="legend-item"><div class="legend-dot oversold-dot"></div><span>Oversold (RSI ≤ 20)</span></div>
         <div class="legend-item"><div class="legend-dot overbought-dot"></div><span>Overbought (RSI ≥ 80)</span></div>
@@ -185,7 +283,7 @@ if 'results' in st.session_state and st.session_state.results:
         <div class="legend-item"><span class="divergence-arrow bearish-arrow">↓</span><span>Bearish Divergence</span></div>
     </div>""", unsafe_allow_html=True)
 
-    # --- Affichage du tableau de résultats ---
+    # Affichage du tableau de résultats (inchangé)
     st.markdown("### 📈 RSI & Divergence Analysis Results")
     html_table = '<table class="rsi-table">'
     html_table += '<thead><tr><th>Devises</th>'
@@ -201,19 +299,18 @@ if 'results' in st.session_state and st.session_state.results:
             css_class = get_rsi_class(rsi_val)
             formatted_val = format_rsi(rsi_val)
             
-            # MODIFIÉ : Utilisation des flèches au lieu des emojis
             divergence_icon = ""
             if divergence == "Haussière":
-                divergence_icon = '<span class="divergence-arrow bullish-arrow">↑</span>' # Flèche HAUT
+                divergence_icon = '<span class="divergence-arrow bullish-arrow">↑</span>'
             elif divergence == "Baissière":
-                divergence_icon = '<span class="divergence-arrow bearish-arrow">↓</span>' # Flèche BAS
+                divergence_icon = '<span class="divergence-arrow bearish-arrow">↓</span>'
                 
             html_table += f'<td class="{css_class}">{formatted_val} {divergence_icon}</td>'
         html_table += '</tr>'
     html_table += '</tbody></table>'
     st.markdown(html_table, unsafe_allow_html=True)
 
-    # --- Affichage des statistiques ---
+    # Affichage des statistiques (inchangé)
     st.markdown("### 📊 Signal Statistics")
     stat_cols = st.columns(len(TIMEFRAMES_DISPLAY))
     for i, tf_display_name in enumerate(TIMEFRAMES_DISPLAY):
@@ -226,17 +323,15 @@ if 'results' in st.session_state and st.session_state.results:
             oversold_count = sum(1 for x in valid_rsi_values if x <= 20)
             overbought_count = sum(1 for x in valid_rsi_values if x >= 80)
             total_signals = oversold_count + overbought_count + bullish_div_count + bearish_div_count
-            
-            # MODIFIÉ : Mise à jour du delta avec les nouvelles flèches
             delta_text = f"🔴 {oversold_count} S | 🟢 {overbought_count} B | <span class='bullish-arrow'>↑</span> {bullish_div_count} | <span class='bearish-arrow'>↓</span> {bearish_div_count}"
             
             with stat_cols[i]:
                 st.metric(label=f"Signals {tf_display_name}", value=str(total_signals))
-                st.markdown(delta_text, unsafe_allow_html=True) # Utiliser markdown pour afficher les flèches stylisées
+                st.markdown(delta_text, unsafe_allow_html=True)
         else:
             with stat_cols[i]: st.metric(label=f"Signals {tf_display_name}", value="N/A", delta="No data")
 
-# --- Guide Utilisateur et Footer ---
+# Guide Utilisateur et Footer (inchangés)
 with st.expander("ℹ️ User Guide & Configuration", expanded=False):
     st.markdown("""
     ## Data Source: OANDA
