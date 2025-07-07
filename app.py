@@ -162,10 +162,9 @@ def create_pdf_report(results_data, last_scan_time):
             self.set_font('Arial', 'I', 8)
             self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
-    pdf = PDF(orientation='L', unit='mm', format='A4') # L for landscape
+    pdf = PDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
-    # Couleurs (RGB)
     color_header_bg = (51, 58, 73)
     color_text_light = (234, 234, 234)
     color_oversold_bg = (255, 75, 75)
@@ -173,7 +172,6 @@ def create_pdf_report(results_data, last_scan_time):
     color_neutral_bg = (22, 26, 29)
     color_neutral_text = (192, 192, 192)
 
-    # Entête du tableau
     pdf.set_font('Arial', 'B', 10)
     pdf.set_fill_color(*color_header_bg)
     pdf.set_text_color(*color_text_light)
@@ -184,21 +182,17 @@ def create_pdf_report(results_data, last_scan_time):
         pdf.cell(cell_width_tf, 10, tf, 1, 0, 'C', True)
     pdf.ln()
 
-    # Corps du tableau
     pdf.set_font('Arial', '', 9)
     for row in results_data:
-        # Cellule de la devise
         pdf.set_fill_color(*color_neutral_bg)
         pdf.set_text_color(*color_text_light)
         pdf.cell(cell_width_pair, 10, row['Devises'], 1, 0, 'L', True)
         
-        # Cellules des timeframes
         for tf_display_name in TIMEFRAMES_DISPLAY:
             cell_data = row.get(tf_display_name, {'rsi': np.nan, 'divergence': 'Aucune'})
             rsi_val = cell_data.get('rsi', np.nan)
             divergence = cell_data.get('divergence', 'Aucune')
             
-            # Définir la couleur de fond et du texte
             if pd.notna(rsi_val):
                 if rsi_val <= 20: pdf.set_fill_color(*color_oversold_bg); pdf.set_text_color(255, 255, 255)
                 elif rsi_val >= 80: pdf.set_fill_color(*color_overbought_bg); pdf.set_text_color(255, 255, 255)
@@ -206,7 +200,6 @@ def create_pdf_report(results_data, last_scan_time):
             else:
                 pdf.set_fill_color(*color_neutral_bg); pdf.set_text_color(*color_neutral_text)
             
-            # Formater le texte de la cellule
             formatted_val = format_rsi(rsi_val)
             divergence_text = ""
             if divergence == "Haussière": divergence_text = " (BULL)"
@@ -216,13 +209,13 @@ def create_pdf_report(results_data, last_scan_time):
             pdf.cell(cell_width_tf, 10, cell_text, 1, 0, 'C', True)
         pdf.ln()
 
-    return pdf.output(dest='S').encode('latin-1')
+    # CORRECTION N°1 : Supprimer l'appel .encode()
+    return pdf.output()
 
 
 # --- Interface Utilisateur ---
 st.markdown('<h1 class="screener-header">Screener RSI & Divergence (OANDA)</h1>', unsafe_allow_html=True)
 
-# Boutons d'action en haut de la page
 if 'scan_done' in st.session_state and st.session_state.scan_done:
     last_scan_time_str = st.session_state.last_scan_time.strftime("%Y-%m-%d %H:%M:%S")
     st.markdown(f"""<div class="update-info">🔄 Dernière mise à jour : {last_scan_time_str} (Données OANDA)</div>""", unsafe_allow_html=True)
@@ -235,18 +228,17 @@ with col2:
         st.cache_data.clear()
         st.rerun()
 
+# CORRECTION N°2 : Déplacer l'appel de la fonction dans le bouton de téléchargement
 with col3:
     if 'results' in st.session_state and st.session_state.results:
-        pdf_data = create_pdf_report(st.session_state.results, st.session_state.last_scan_time.strftime("%d/%m/%Y %H:%M:%S"))
         st.download_button(
             label="📄 Exporter en PDF",
-            data=pdf_data,
+            data=create_pdf_report(st.session_state.results, st.session_state.last_scan_time.strftime("%d/%m/%Y %H:%M:%S")),
             file_name=f"RSI_Screener_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
             mime="application/pdf",
             use_container_width=True
         )
 
-# Logique de scan initiale
 if 'scan_done' not in st.session_state or not st.session_state.scan_done:
     if st.button("🚀 Lancer le premier scan", use_container_width=True):
         with st.spinner("🚀 Performing high-speed scan with OANDA..."):
@@ -259,8 +251,6 @@ if 'scan_done' not in st.session_state or not st.session_state.scan_done:
          st.success(f"✅ Analysis complete! {len(FOREX_PAIRS)} pairs analyzed.")
          st.rerun()
 
-
-# Affichage des résultats si le scan a été effectué
 if 'results' in st.session_state and st.session_state.results:
     st.markdown("""<div class="legend-container">
         <div class="legend-item"><div class="legend-dot oversold-dot"></div><span>Oversold (RSI ≤ 20)</span></div>
@@ -269,7 +259,6 @@ if 'results' in st.session_state and st.session_state.results:
         <div class="legend-item"><span class="divergence-arrow bearish-arrow">↓</span><span>Bearish Divergence</span></div>
     </div>""", unsafe_allow_html=True)
 
-    # Affichage du tableau de résultats
     st.markdown("### 📈 RSI & Divergence Analysis Results")
     html_table = '<table class="rsi-table">'
     html_table += '<thead><tr><th>Devises</th>'
@@ -296,7 +285,6 @@ if 'results' in st.session_state and st.session_state.results:
     html_table += '</tbody></table>'
     st.markdown(html_table, unsafe_allow_html=True)
 
-    # Affichage des statistiques
     st.markdown("### 📊 Signal Statistics")
     stat_cols = st.columns(len(TIMEFRAMES_DISPLAY))
     for i, tf_display_name in enumerate(TIMEFRAMES_DISPLAY):
@@ -317,7 +305,6 @@ if 'results' in st.session_state and st.session_state.results:
         else:
             with stat_cols[i]: st.metric(label=f"Signals {tf_display_name}", value="N/A", delta="No data")
 
-# Guide Utilisateur et Footer
 with st.expander("ℹ️ User Guide & Configuration", expanded=False):
     st.markdown("""
     ## Data Source: OANDA
