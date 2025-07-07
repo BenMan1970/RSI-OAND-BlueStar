@@ -1,6 +1,6 @@
 streamlit
 pandas
 numpy
-scipy
 oandapyV20
-Pillow
+scipy
+fpdf2
