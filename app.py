@@ -148,16 +148,20 @@ def run_analysis_process():
 def create_pdf_report(results_data, last_scan_time):
     class PDF(FPDF):
         def header(self):
-            self.set_font('Arial', 'B', 14)
+            self.set_font('DejaVuSans', 'B', 14)
             self.cell(0, 10, 'Rapport Screener RSI & Divergence', 0, 1, 'C')
-            self.set_font('Arial', '', 8)
+            self.set_font('DejaVuSans', '', 8)
             self.cell(0, 5, f'Généré le: {last_scan_time}', 0, 1, 'C')
             self.ln(5)
         def footer(self):
             self.set_y(-15)
-            self.set_font('Arial', 'I', 8)
+            self.set_font('DejaVuSans', 'I', 8)
             self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
     pdf = PDF(orientation='L', unit='mm', format='A4')
+    # Ajouter les fonts Unicode
+    pdf.add_font('DejaVuSans', '', 'DejaVuSans.ttf')
+    pdf.add_font('DejaVuSans', 'B', 'DejaVuSans-Bold.ttf')
+    pdf.add_font('DejaVuSans', 'I', 'DejaVuSans-Oblique.ttf')
     pdf.add_page()
    
     color_header_bg = (51, 58, 73)
@@ -166,7 +170,7 @@ def create_pdf_report(results_data, last_scan_time):
     color_overbought_bg = (61, 153, 112)
     color_neutral_bg = (22, 26, 29)
     color_neutral_text = (192, 192, 192)
-    pdf.set_font('Arial', 'B', 10)
+    pdf.set_font('DejaVuSans', 'B', 10)
     pdf.set_fill_color(*color_header_bg)
     pdf.set_text_color(*color_text_light)
     cell_width_pair = 50
@@ -175,7 +179,7 @@ def create_pdf_report(results_data, last_scan_time):
     for tf in TIMEFRAMES_DISPLAY:
         pdf.cell(cell_width_tf, 10, tf, 1, 0, 'C', True)
     pdf.ln()
-    pdf.set_font('Arial', '', 9)
+    pdf.set_font('DejaVuSans', '', 9)
     for row in results_data:
         pdf.set_fill_color(*color_neutral_bg)
         pdf.set_text_color(*color_text_light)
