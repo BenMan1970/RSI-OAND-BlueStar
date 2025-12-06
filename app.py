@@ -109,37 +109,35 @@ TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly']
 TIMEFRAMES_FETCH_KEYS = ['H1', 'H4', 'D1', 'W1']
 # --- Fonction principale d'analyse ---
 def run_analysis_process():
-    results_list = []
+    results_list = [ {'Devises': pair} for pair in FOREX_PAIRS ]
     total_calls = len(FOREX_PAIRS) * len(TIMEFRAMES_FETCH_KEYS)
     progress_widget = st.progress(0)
     status_widget = st.empty()
     call_count = 0
 
     def process_timeframe(pair_name, tf_key, tf_display_name):
-        nonlocal call_count
-        call_count += 1
-        status_widget.text(f"Scanning: {pair_name} on {tf_display_name} ({call_count}/{total_calls})")
         data_ohlc = fetch_forex_data_oanda(pair_name, tf_key)
         rsi_value, rsi_series = calculate_rsi(data_ohlc, period=10)
         divergence_signal = "Aucune"
         if data_ohlc is not None and rsi_series is not None:
             divergence_signal = detect_divergence(data_ohlc, rsi_series)
-        progress_widget.progress(call_count / total_calls)
-        return tf_display_name, {'rsi': rsi_value, 'divergence': divergence_signal}
+        return pair_name, tf_display_name, {'rsi': rsi_value, 'divergence': divergence_signal}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = []
-        for pair_name in FOREX_PAIRS:
-            row_data = {'Devises': pair_name}
-            for tf_key, tf_display_name in zip(TIMEFRAMES_FETCH_KEYS, TIMEFRAMES_DISPLAY):
-                futures.append(executor.submit(process_timeframe, pair_name, tf_key, tf_display_name))
-            results_list.append(row_data)  # Ajouter row_data vide, à remplir après
+        futures = [
+            executor.submit(process_timeframe, pair_name, tf_key, tf_display_name)
+            for pair_name in FOREX_PAIRS
+            for tf_key, tf_display_name in zip(TIMEFRAMES_FETCH_KEYS, TIMEFRAMES_DISPLAY)
+        ]
 
-        # Récupérer les résultats et remplir row_data
-        pair_index = 0
         for future in concurrent.futures.as_completed(futures):
-            tf_display_name, data = future.result()
-            results_list[pair_index // len(TIMEFRAMES_DISPLAY)][tf_display_name] = data
+            pair_name, tf_display_name, data = future.result()
+            call_count += 1
+            status_widget.text(f"Scanning: {pair_name} on {tf_display_name} ({call_count}/{total_calls})")
+            progress_widget.progress(call_count / total_calls)
+            # Trouver l'index de la paire et ajouter les données
+            pair_index = FOREX_PAIRS.index(pair_name)
+            results_list[pair_index][tf_display_name] = data
 
     st.session_state.results = results_list
     st.session_state.last_scan_time = datetime.now()
