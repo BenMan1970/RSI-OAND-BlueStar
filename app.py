@@ -1,5 +1,150 @@
+# --- START OF FILE app.py ---
+import streamlit as st
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import warnings
+from oandapyV20 import API
+import oandapyV20.endpoints.instruments as instruments
+from scipy.signal import find_peaks
+from fpdf import FPDF
+import concurrent.futures
+warnings.filterwarnings('ignore')
+
+# --- Configuration de la page Streamlit ---
+st.set_page_config(
+    page_title="RSI & Divergence Screener (OANDA)",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# --- CSS personnalisé ---
+st.markdown("""
+<style>
+    .main > div { padding-top: 2rem; }
+    .screener-header { font-size: 28px; font-weight: bold; color: #FAFAFA; margin-bottom: 15px; text-align: center; }
+    .update-info { background-color: #262730; padding: 8px 15px; border-radius: 5px; margin-bottom: 20px; font-size: 14px; color: #A9A9A9; border: 1px solid #333A49; text-align: center; }
+    .legend-container { display: flex; justify-content: center; flex-wrap: wrap; gap: 25px; margin: 25px 0; padding: 15px; border-radius: 5px; background-color: #1A1C22; }
+    .legend-item { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #D3D3D3; }
+    .legend-dot { width: 12px; height: 12px; border-radius: 50%; }
+    .oversold-dot { background-color: #FF4B4B; }
+    .overbought-dot { background-color: #3D9970; }
+    h3 { color: #EAEAEA; text-align: center; margin-top: 30px; margin-bottom: 15px; }
+    .rsi-table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; box-shadow: 0 4px 8px 0 rgba(0,0,0,0.1); }
+    .rsi-table th { background-color: #333A49; color: #EAEAEA !important; padding: 14px 10px; text-align: center; font-weight: bold; font-size: 15px; border: 1px solid #262730; }
+    .rsi-table td { padding: 12px 10px; text-align: center; border: 1px solid #262730; font-size: 14px; }
+    .devises-cell { font-weight: bold !important; color: #E0E0E0 !important; font-size: 15px !important; text-align: left !important; padding-left: 15px !important; }
+    .oversold-cell { background-color: rgba(255, 75, 75, 0.7) !important; color: white !important; font-weight: bold; }
+    .overbought-cell { background-color: rgba(61, 153, 112, 0.7) !important; color: white !important; font-weight: bold; }
+    .neutral-cell { color: #C0C0C0 !important; background-color: #161A1D; }
+    .divergence-arrow { font-size: 20px; font-weight: bold; vertical-align: middle; margin-left: 6px; }
+    .bullish-arrow { color: #3D9970; }
+    .bearish-arrow { color: #FF4B4B; }
+</style>
+""", unsafe_allow_html=True)
+
+# --- Accès aux secrets OANDA ---
+try:
+    OANDA_ACCOUNT_ID = st.secrets["OANDA_ACCOUNT_ID"]
+    OANDA_ACCESS_TOKEN = st.secrets["OANDA_ACCESS_TOKEN"]
+except KeyError:
+    st.error("🔑 Secrets OANDA non trouvés !")
+    st.info("Veuillez vérifier que les noms de vos secrets sont bien en MAJUSCULES.")
+    st.code('OANDA_ACCOUNT_ID = "..."\nOANDA_ACCESS_TOKEN = "..."')
+    st.stop()
+
+# --- Fonctions de calcul et de récupération de données ---
+def calculate_rsi(prices, period=10):
+    try:
+        if prices is None or len(prices) < period + 1: return np.nan, None
+        ohlc4 = (prices['Open'] + prices['High'] + prices['Low'] + prices['Close']) / 4
+        delta = ohlc4.diff()
+        gains = delta.where(delta > 0, 0.0)
+        losses = -delta.where(delta < 0, 0.0)
+        if len(gains.dropna()) < period or len(losses.dropna()) < period: return np.nan, None
+        avg_gains = gains.ewm(com=period - 1, adjust=False, min_periods=period).mean()
+        avg_losses = losses.ewm(com=period - 1, adjust=False, min_periods=period).mean()
+        rs = avg_gains / avg_losses
+        rs[avg_losses == 0] = np.inf
+        rsi_series = 100.0 - (100.0 / (1.0 + rs))
+        if rsi_series.empty or pd.isna(rsi_series.iloc[-1]): return np.nan, None
+        return rsi_series.iloc[-1], rsi_series
+    except Exception:
+        return np.nan, None
+
+def detect_divergence(price_data, rsi_series, lookback=30, peak_distance=5):
+    if rsi_series is None or len(price_data) < lookback: return "Aucune"
+    recent_price = price_data.iloc[-lookback:]
+    recent_rsi = rsi_series.iloc[-lookback:]
+    price_peaks_idx, _ = find_peaks(recent_price['High'], distance=peak_distance)
+    if len(price_peaks_idx) >= 2 and recent_price['High'].iloc[price_peaks_idx[-1]] > recent_price['High'].iloc[price_peaks_idx[-2]] and recent_rsi.iloc[price_peaks_idx[-1]] < recent_rsi.iloc[price_peaks_idx[-2]]:
+        return "Baissière"
+    price_troughs_idx, _ = find_peaks(-recent_price['Low'], distance=peak_distance)
+    if len(price_troughs_idx) >= 2 and recent_price['Low'].iloc[price_troughs_idx[-1]] < recent_price['Low'].iloc[price_troughs_idx[-2]] and recent_rsi.iloc[price_troughs_idx[-1]] > recent_rsi.iloc[price_troughs_idx[-2]]:
+        return "Haussière"
+    return "Aucune"
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_forex_data_oanda(pair, timeframe_key):
+    try:
+        api = API(access_token=OANDA_ACCESS_TOKEN, environment="practice")
+        instrument = pair.replace('/', '_')
+        params = {'granularity': {'H1':'H1', 'H4':'H4', 'D1':'D', 'W1':'W'}[timeframe_key], 'count': 100}
+        r = instruments.InstrumentsCandles(instrument=instrument, params=params)
+        api.request(r)
+        data_list = [{'Time':c['time'], 'Open':float(c['mid']['o']), 'High':float(c['mid']['h']), 'Low':float(c['mid']['l']), 'Close':float(c['mid']['c']), 'Volume':int(c['volume'])} for c in r.response['candles']]
+        if not data_list: return None
+        df = pd.DataFrame(data_list)
+        df['Time'] = pd.to_datetime(df['Time'])
+        df.set_index('Time', inplace=True)
+        return df
+    except Exception:
+        return None
+
+def format_rsi(value): 
+    return "N/A" if pd.isna(value) else "{:.2f}".format(value)
+
+def get_rsi_class(value):
+    if pd.isna(value): return "neutral-cell"
+    elif value <= 20: return "oversold-cell"
+    elif value >= 80: return "overbought-cell"
+    return "neutral-cell"
+
+# --- Constantes ---
+ASSETS = ['EUR/USD', 'USD/JPY', 'GBP/USD', 'USD/CHF', 'AUD/USD', 'USD/CAD', 'NZD/USD', 'EUR/JPY', 'GBP/JPY', 'AUD/JPY', 'NZD/JPY', 'CAD/JPY', 'CHF/JPY', 'EUR/GBP', 'EUR/AUD', 'EUR/CAD', 'EUR/NZD', 'EUR/CHF', 'XAU/USD', 'XPT/USD', 'US30/USD', 'NAS100/USD', 'SPX500/USD']
+TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly']
+TIMEFRAMES_FETCH_KEYS = ['H1', 'H4', 'D1', 'W1']
+
+# --- Fonction principale d'analyse ---
+def run_analysis_process():
+    results_list = []
+    total_calls = len(ASSETS) * len(TIMEFRAMES_FETCH_KEYS)
+    progress_widget = st.progress(0)
+    status_widget = st.empty()
+    call_count = 0
+    for pair_name in ASSETS:
+        row_data = {'Devises': pair_name}
+        for tf_key, tf_display_name in zip(TIMEFRAMES_FETCH_KEYS, TIMEFRAMES_DISPLAY):
+            call_count += 1
+            status_widget.text("Scanning: {} on {} ({}/{})".format(pair_name, tf_display_name, call_count, total_calls))
+            data_ohlc = fetch_forex_data_oanda(pair_name, tf_key)
+            rsi_value, rsi_series = calculate_rsi(data_ohlc, period=10)
+            divergence_signal = "Aucune"
+            if data_ohlc is not None and rsi_series is not None:
+                divergence_signal = detect_divergence(data_ohlc, rsi_series)
+            row_data[tf_display_name] = {'rsi': rsi_value, 'divergence': divergence_signal}
+            progress_widget.progress(call_count / total_calls)
+        results_list.append(row_data)
+    st.session_state.results = results_list
+    st.session_state.last_scan_time = datetime.now()
+    st.session_state.scan_done = True
+    status_widget.empty()
+    progress_widget.empty()
+
+# --- Fonction de création du rapport PDF AMELIOREE ---
 def create_pdf_report(results_data, last_scan_time):
-    """Version PDF simplifiee pour analyse IA"""
+    """Version PDF amelioree pour analyse IA quotidienne"""
     
     class PDF(FPDF):
         def header(self):
@@ -49,7 +194,6 @@ def create_pdf_report(results_data, last_scan_time):
     pdf.set_font('Arial', 'B', 11)
     pdf.cell(0, 8, 'SYNTHESE DES SIGNAUX', 0, 1, 'L')
     
-    # Calculer les stats
     stats_by_tf = {}
     for tf in TIMEFRAMES_DISPLAY:
         tf_data = [row.get(tf, {}) for row in results_data]
@@ -67,7 +211,6 @@ def create_pdf_report(results_data, last_scan_time):
             'bear_div': bear_div
         }
     
-    # Afficher les stats
     pdf.set_font('Arial', '', 9)
     for tf, stats in stats_by_tf.items():
         line = '{}: {} survente | {} surachat | {} div.bull | {} div.bear'.format(
@@ -77,11 +220,10 @@ def create_pdf_report(results_data, last_scan_time):
     
     pdf.ln(5)
     
-    # SECTION 3: SIGNAUX PRIORITAIRES
+    # SECTION 3: OPPORTUNITES
     pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 8, 'SIGNAUX PRIORITAIRES (Top Opportunites)', 0, 1, 'L')
+    pdf.cell(0, 8, 'OPPORTUNITES PRIORITAIRES (Top 10)', 0, 1, 'L')
     
-    # Identifier opportunites
     opportunities = []
     for row in results_data:
         for tf in TIMEFRAMES_DISPLAY:
@@ -144,7 +286,6 @@ def create_pdf_report(results_data, last_scan_time):
     pdf.cell(0, 8, 'DONNEES DETAILLEES PAR ACTIF', 0, 1, 'L')
     pdf.ln(2)
     
-    # En-tete tableau
     pdf.set_font('Arial', 'B', 10)
     pdf.set_fill_color(*color_header_bg)
     pdf.set_text_color(234, 234, 234)
@@ -157,7 +298,6 @@ def create_pdf_report(results_data, last_scan_time):
         pdf.cell(cell_width_tf, 10, tf, 1, 0, 'C', True)
     pdf.ln()
     
-    # Donnees
     pdf.set_font('Arial', '', 9)
     
     for row in results_data:
@@ -170,7 +310,6 @@ def create_pdf_report(results_data, last_scan_time):
             rsi_val = cell_data.get('rsi', np.nan)
             divergence = cell_data.get('divergence', 'Aucune')
             
-            # Couleur selon RSI
             if pd.notna(rsi_val):
                 if rsi_val <= 20:
                     pdf.set_fill_color(*color_oversold_bg)
@@ -197,7 +336,7 @@ def create_pdf_report(results_data, last_scan_time):
         
         pdf.ln()
     
-    # SECTION 5: NOTES POUR IA
+    # SECTION 5: NOTES IA
     pdf.add_page()
     pdf.set_font('Arial', 'B', 12)
     pdf.cell(0, 10, 'SECTION ANALYSE IA', 0, 1, 'L')
@@ -232,3 +371,106 @@ def create_pdf_report(results_data, last_scan_time):
     pdf.cell(0, 5, '[Espace pour votre analyse quotidienne]', 0, 1, 'L')
     
     return bytes(pdf.output())
+
+# --- Interface Utilisateur ---
+st.markdown('<h1 class="screener-header">Screener RSI & Divergence (OANDA)</h1>', unsafe_allow_html=True)
+
+if 'scan_done' in st.session_state and st.session_state.scan_done:
+    last_scan_time_str = st.session_state.last_scan_time.strftime("%Y-%m-%d %H:%M:%S")
+    st.markdown('<div class="update-info">🔄 Dernière mise à jour : {} (Données OANDA)</div>'.format(last_scan_time_str), unsafe_allow_html=True)
+
+col1, col2, col3 = st.columns([4, 1, 1])
+
+with col2:
+    if st.button("🔄 Rescan", use_container_width=True):
+        st.session_state.scan_done = False
+        st.cache_data.clear()
+        st.rerun()
+
+with col3:
+    if 'results' in st.session_state and st.session_state.results:
+        st.download_button(
+            label="📄 Exporter en PDF",
+            data=create_pdf_report(st.session_state.results, st.session_state.last_scan_time.strftime("%d/%m/%Y %H:%M:%S")),
+            file_name="RSI_Screener_Report_{}.pdf".format(datetime.now().strftime('%Y%m%d_%H%M')),
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+if 'scan_done' not in st.session_state or not st.session_state.scan_done:
+    if st.button("🚀 Lancer le premier scan", use_container_width=True):
+        with st.spinner("🚀 Performing high-speed scan with OANDA..."):
+            run_analysis_process()
+        st.success("✅ Analysis complete! {} assets analyzed.".format(len(ASSETS)))
+        st.rerun()
+    elif 'scan_done' in st.session_state and not st.session_state.scan_done:
+         with st.spinner("🚀 Performing high-speed scan with OANDA..."):
+            run_analysis_process()
+         st.success("✅ Analysis complete! {} assets analyzed.".format(len(ASSETS)))
+         st.rerun()
+
+if 'results' in st.session_state and st.session_state.results:
+    st.markdown("""<div class="legend-container">
+        <div class="legend-item"><div class="legend-dot oversold-dot"></div><span>Oversold (RSI ≤ 20)</span></div>
+        <div class="legend-item"><div class="legend-dot overbought-dot"></div><span>Overbought (RSI ≥ 80)</span></div>
+        <div class="legend-item"><span class="divergence-arrow bullish-arrow">↑</span><span>Bullish Divergence</span></div>
+        <div class="legend-item"><span class="divergence-arrow bearish-arrow">↓</span><span>Bearish Divergence</span></div>
+    </div>""", unsafe_allow_html=True)
+    
+    st.markdown("### 📈 RSI & Divergence Analysis Results")
+    
+    html_table = '<table class="rsi-table">'
+    html_table += '<thead><tr><th>Devises</th>'
+    for tf_display_name in TIMEFRAMES_DISPLAY: 
+        html_table += '<th>{}</th>'.format(tf_display_name)
+    html_table += '</tr></thead><tbody>'
+    
+    for row in st.session_state.results:
+        html_table += '<tr><td class="devises-cell">{}</td>'.format(row["Devises"])
+        for tf_display_name in TIMEFRAMES_DISPLAY:
+            cell_data = row.get(tf_display_name, {'rsi': np.nan, 'divergence': 'Aucune'})
+            rsi_val = cell_data.get('rsi', np.nan)
+            divergence = cell_data.get('divergence', 'Aucune')
+            css_class = get_rsi_class(rsi_val)
+            formatted_val = format_rsi(rsi_val)
+           
+            divergence_icon = ""
+            if divergence == "Haussière":
+                divergence_icon = '<span class="divergence-arrow bullish-arrow">↑</span>'
+            elif divergence == "Baissière":
+                divergence_icon = '<span class="divergence-arrow bearish-arrow">↓</span>'
+               
+            html_table += '<td class="{}">{} {}</td>'.format(css_class, formatted_val, divergence_icon)
+        html_table += '</tr>'
+    
+    html_table += '</tbody></table>'
+    st.markdown(html_table, unsafe_allow_html=True)
+    
+    st.markdown("### 📊 Signal Statistics")
+    stat_cols = st.columns(len(TIMEFRAMES_DISPLAY))
+    
+    for i, tf_display_name in enumerate(TIMEFRAMES_DISPLAY):
+        tf_data = [row.get(tf_display_name, {}) for row in st.session_state.results]
+        valid_rsi_values = [d.get('rsi') for d in tf_data if pd.notna(d.get('rsi'))]
+        bullish_div_count = sum(1 for d in tf_data if d.get('divergence') == 'Haussière')
+        bearish_div_count = sum(1 for d in tf_data if d.get('divergence') == 'Baissière')
+        
+        if valid_rsi_values:
+            oversold_count = sum(1 for x in valid_rsi_values if x <= 20)
+            overbought_count = sum(1 for x in valid_rsi_values if x >= 80)
+            total_signals = oversold_count + overbought_count + bullish_div_count + bearish_div_count
+            delta_text = "🔴 {} S | 🟢 {} B | <span class='bullish-arrow'>↑</span> {} | <span class='bearish-arrow'>↓</span> {}".format(
+                oversold_count, overbought_count, bullish_div_count, bearish_div_count
+            )
+           
+            with stat_cols[i]:
+                st.metric(label="Signals {}".format(tf_display_name), value=str(total_signals))
+                st.markdown(delta_text, unsafe_allow_html=True)
+        else:
+            with stat_cols[i]: 
+                st.metric(label="Signals {}".format(tf_display_name), value="N/A", delta="No data")
+
+with st.expander("ℹ️ User Guide & Configuration", expanded=False):
+    st.markdown("""
+    ## Data Source: OANDA
+    - **API**: High-speed data
