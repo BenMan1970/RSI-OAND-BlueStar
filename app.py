@@ -89,13 +89,13 @@ def fetch_forex_data_oanda(pair, timeframe_key):
         r = instruments.InstrumentsCandles(instrument=instrument, params=params)
         api.request(r)
         data_list = [{'Time':c['time'], 'Open':float(c['mid']['o']), 'High':float(c['mid']['h']), 'Low':float(c['mid']['l']), 'Close':float(c['mid']['c']), 'Volume':int(c['volume'])} for c in r.response['candles']]
-        if not data_list: return None, "No data returned"
+        if not data_list: return None
         df = pd.DataFrame(data_list)
         df['Time'] = pd.to_datetime(df['Time'])
         df.set_index('Time', inplace=True)
-        return df, None
-    except Exception as e:
-        return None, str(e)
+        return df
+    except Exception:
+        return None
 def format_rsi(value): return "N/A" if pd.isna(value) else f"{value:.2f}"
 def get_rsi_class(value):
     if pd.isna(value): return "neutral-cell"
@@ -103,45 +103,29 @@ def get_rsi_class(value):
     elif value >= 80: return "overbought-cell"
     return "neutral-cell"
 # --- Constantes ---
-FOREX_PAIRS = [ 'EUR/USD', 'USD/JPY', 'GBP/USD', 'USD/CHF', 'AUD/USD', 'USD/CAD', 'NZD/USD', 'EUR/JPY', 'GBP/JPY', 'AUD/JPY', 'NZD/JPY', 'CAD/JPY', 'CHF/JPY', 'EUR/GBP', 'EUR/AUD', 'EUR/CAD', 'EUR/NZD', 'EUR/CHF' ]
+ASSETS = [ 'EUR/USD', 'USD/JPY', 'GBP/USD', 'USD/CHF', 'AUD/USD', 'USD/CAD', 'NZD/USD', 'EUR/JPY', 'GBP/JPY', 'AUD/JPY', 'NZD/JPY', 'CAD/JPY', 'CHF/JPY', 'EUR/GBP', 'EUR/AUD', 'EUR/CAD', 'EUR/NZD', 'EUR/CHF', 'XAU/USD', 'XPT/USD', 'US30/USD', 'NAS100/USD', 'SPX500/USD' ]
 TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly']
 TIMEFRAMES_FETCH_KEYS = ['H1', 'H4', 'D1', 'W1']
 # --- Fonction principale d'analyse ---
 def run_analysis_process():
-    results_list = [ {'Devises': pair} for pair in FOREX_PAIRS ]
-    total_calls = len(FOREX_PAIRS) * len(TIMEFRAMES_FETCH_KEYS)
+    results_list = []
+    total_calls = len(ASSETS) * len(TIMEFRAMES_FETCH_KEYS)
     progress_widget = st.progress(0)
     status_widget = st.empty()
     call_count = 0
-
-    def process_timeframe(pair_name, tf_key, tf_display_name):
-        data_ohlc, error = fetch_forex_data_oanda(pair_name, tf_key)
-        if error:
-            return pair_name, tf_display_name, {'rsi': np.nan, 'divergence': 'Aucune'}, error
-        rsi_value, rsi_series = calculate_rsi(data_ohlc, period=10)
-        divergence_signal = "Aucune"
-        if rsi_series is not None:
-            divergence_signal = detect_divergence(data_ohlc, rsi_series)
-        return pair_name, tf_display_name, {'rsi': rsi_value, 'divergence': divergence_signal}, None
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [
-            executor.submit(process_timeframe, pair_name, tf_key, tf_display_name)
-            for pair_name in FOREX_PAIRS
-            for tf_key, tf_display_name in zip(TIMEFRAMES_FETCH_KEYS, TIMEFRAMES_DISPLAY)
-        ]
-
-        for future in concurrent.futures.as_completed(futures):
-            pair_name, tf_display_name, data, error = future.result()
+    for pair_name in ASSETS:
+        row_data = {'Devises': pair_name}
+        for tf_key, tf_display_name in zip(TIMEFRAMES_FETCH_KEYS, TIMEFRAMES_DISPLAY):
             call_count += 1
             status_widget.text(f"Scanning: {pair_name} on {tf_display_name} ({call_count}/{total_calls})")
+            data_ohlc = fetch_forex_data_oanda(pair_name, tf_key)
+            rsi_value, rsi_series = calculate_rsi(data_ohlc, period=10)
+            divergence_signal = "Aucune"
+            if data_ohlc is not None and rsi_series is not None:
+                divergence_signal = detect_divergence(data_ohlc, rsi_series)
+            row_data[tf_display_name] = {'rsi': rsi_value, 'divergence': divergence_signal}
             progress_widget.progress(call_count / total_calls)
-            if error:
-                st.warning(f"⚠️ Erreur lors de la récupération des données pour {pair_name} sur {tf_display_name}: {error}")
-            # Trouver l'index de la paire et ajouter les données
-            pair_index = FOREX_PAIRS.index(pair_name)
-            results_list[pair_index][tf_display_name] = data
-
+        results_list.append(row_data)
     st.session_state.results = results_list
     st.session_state.last_scan_time = datetime.now()
     st.session_state.scan_done = True
@@ -230,12 +214,12 @@ if 'scan_done' not in st.session_state or not st.session_state.scan_done:
     if st.button("🚀 Lancer le premier scan", use_container_width=True):
         with st.spinner("🚀 Performing high-speed scan with OANDA..."):
             run_analysis_process()
-        st.success(f"✅ Analysis complete! {len(FOREX_PAIRS)} pairs analyzed.")
+        st.success(f"✅ Analysis complete! {len(ASSETS)} assets analyzed.")
         st.rerun()
     elif 'scan_done' in st.session_state and not st.session_state.scan_done:
          with st.spinner("🚀 Performing high-speed scan with OANDA..."):
             run_analysis_process()
-         st.success(f"✅ Analysis complete! {len(FOREX_PAIRS)} pairs analyzed.")
+         st.success(f"✅ Analysis complete! {len(ASSETS)} assets analyzed.")
          st.rerun()
 if 'results' in st.session_state and st.session_state.results:
     st.markdown("""<div class="legend-container">
