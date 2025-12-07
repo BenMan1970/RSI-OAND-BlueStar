@@ -153,7 +153,6 @@ def create_pdf_report(results_data, last_scan_time):
     pdf = PDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
-    # Couleurs VIVES
     color_header = (30, 60, 114)
     color_oversold = (220, 20, 60)
     color_overbought = (34, 139, 34)
@@ -168,7 +167,6 @@ def create_pdf_report(results_data, last_scan_time):
     pdf.cell(0, 10, ' RESUME EXECUTIF ', 0, 1, 'L', True)
     pdf.ln(2)
     
-    # Calculer metriques globales
     all_rsi_values = []
     oversold_count = 0
     overbought_count = 0
@@ -465,3 +463,20 @@ def create_pdf_report(results_data, last_scan_time):
     for tf in TIMEFRAMES_DISPLAY:
         pdf.cell(cell_w_tf, 9, tf, 1, 0, 'C', True)
     pdf.ln()
+    
+    pdf.set_font('Arial', '', 8)
+    for row in results_data:
+        pdf.set_fill_color(*color_neutral)
+        pdf.set_text_color(*color_text_dark)
+        pdf.cell(cell_w_pair, 8, row['Devises'], 1, 0, 'L', True)
+        for tf in TIMEFRAMES_DISPLAY:
+            d = row.get(tf, {})
+            rsi = d.get('rsi', np.nan)
+            div = d.get('divergence', 'Aucune')
+            if pd.notna(rsi):
+                if rsi <= 20:
+                    pdf.set_fill_color(*color_oversold)
+                    pdf.set_text_color(255, 255, 255)
+                elif rsi >= 80:
+                    pdf.set_fill_color(*color_overbought)
+                    pdf.set_text
