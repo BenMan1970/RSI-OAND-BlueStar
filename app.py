@@ -63,8 +63,10 @@ ASSETS = [
     'EUR/GBP', 'EUR/AUD', 'EUR/CAD', 'EUR/NZD', 'EUR/CHF', 
     'XAU/USD', 'XPT/USD', 'US30/USD', 'NAS100/USD', 'SPX500/USD'
 ]
-TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly']
-TIMEFRAMES_FETCH_KEYS = ['H1', 'H4', 'D1', 'W1']
+
+# AJOUT DU MONTHLY ICI
+TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly', 'Monthly']
+TIMEFRAMES_FETCH_KEYS = ['H1', 'H4', 'D1', 'W1', 'M']
 
 # --- FUNCTIONS ---
 
@@ -121,8 +123,9 @@ def fetch_forex_data_oanda(pair, timeframe_key):
     try:
         api = API(access_token=OANDA_ACCESS_TOKEN, environment="practice")
         instrument = pair.replace('/', '_')
+        # MAPPING GRANULARITY AVEC MONTHLY
         params = {
-            'granularity': {'H1':'H1', 'H4':'H4', 'D1':'D', 'W1':'W'}[timeframe_key], 
+            'granularity': {'H1':'H1', 'H4':'H4', 'D1':'D', 'W1':'W', 'M':'M'}[timeframe_key], 
             'count': 120
         }
         r = instruments.InstrumentsCandles(instrument=instrument, params=params)
@@ -204,11 +207,9 @@ def create_pdf_report(results_data, last_scan_time):
         def header(self):
             self.set_font('Arial', 'B', 16)
             self.set_text_color(20, 20, 20)
-            # CHANGEMENT ICI: Suppression de OANDA
             self.cell(0, 10, 'MARKET SCANNER - RAPPORT STRATEGIQUE', 0, 1, 'C')
             self.set_font('Arial', 'I', 9)
             self.set_text_color(100, 100, 100)
-            # CHANGEMENT ICI: Suppression de Source: OANDA
             self.cell(0, 5, 'Genere le: ' + str(last_scan_time), 0, 1, 'C')
             self.ln(5)
         def footer(self):
@@ -375,7 +376,8 @@ def create_pdf_report(results_data, last_scan_time):
     pdf.set_text_color(*C_TEXT_HEADER)
     
     w_pair = 40
-    w_tf = (277 - w_pair) / 4
+    # AJUSTEMENT LARGEUR COLONNE AUTO
+    w_tf = (277 - w_pair) / len(TIMEFRAMES_DISPLAY)
     
     pdf.cell(w_pair, 9, "Paire", 1, 0, 'C', True)
     for tf in TIMEFRAMES_DISPLAY:
@@ -439,6 +441,7 @@ def create_pdf_report(results_data, last_scan_time):
    - H1 (1 Heure) : Signal tactique pour entree immediate (Day Trading). Bruit de marche possible.
    - H4 (4 Heures) : Signal Swing Trading. Plus fiable. Indique la tendance pour les 2-3 prochains jours.
    - Weekly : Tendance de fond. Ne pas trader CONTRE un signal Weekly sauf pour du scalping tres court terme.
+   - Monthly : Vue d'investissement Long Terme. Un signal Monthly prend des mois a se construire.
 
 3. GESTION DES CONFLITS
    - Si H1 est SURVENTE mais Weekly est SURACHAT : C'est une correction dans une tendance haussiere (Buy the Dip).
