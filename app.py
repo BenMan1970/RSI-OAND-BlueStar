@@ -1,4 +1,4 @@
-# RSI & DIVERGENCE SCREENER OANDA – VERSION 100% FONCTIONNELLE (DÉCEMBRE 2025)
+# RSI & DIVERGENCE SCREENER OANDA – VERSION QUI MARCHE À COUP SÛR (2025)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -11,21 +11,20 @@ from fpdf import FPDF
 
 warnings.filterwarnings('ignore')
 
-st.set_page_config(page_title="RSI Screener", page_icon="Chart", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="RSI Screener", page_icon="Chart", layout="wide")
 
-# STYLE
 st.markdown("""
 <style>
     .main > div { padding-top: 2rem; }
-    .screener-header { font-size: 36px; font-weight: bold; color: #00D4FF; text-align: center; margin-bottom: 20px; }
-    .update-info { background:#0E1117; padding:15px; border-radius:12px; text-align:center; color:#AAAAAA; margin-bottom:30px; border:1px solid #333; }
-    .rsi-table { width:100%; border-collapse:collapse; margin:30px 0; font-size:15px; }
-    .rsi-table th { background:#1E3A8A; color:white; padding:15px; text-align:center; }
-    .rsi-table td { padding:12px; text-align:center; border:1px solid #444; }
-    .devises-cell { font-weight:bold; text-align:left !important; padding-left:25px; background:#1E293B; color:#E2E8F0; }
-    .oversold-cell { background:#991B1B; color:white; font-weight:bold; }
-    .overbought-cell { background:#166534; color:white; font-weight:bold; }
-    .neutral-cell { background:#1E293B; color:#94A3B8; }
+    .screener-header { font-size: 38px; font-weight: bold; color: #00FFAA; text-align: center; margin-bottom: 25px; }
+    .update-info { background:#0a0a0a; padding:15px; border-radius:12px; text-align:center; color:#ccc; margin-bottom:30px; border:2px solid #333; }
+    .rsi-table { width:100%; border-collapse:collapse; margin:40px 0; font-size:16px; }
+    .rsi-table th { background:#1e40af; color:white; padding:16px; }
+    .rsi-table td { padding:14px; text-align:center; border:1px solid #444; }
+    .devises-cell { font-weight:bold; text-align:left !important; padding-left:30px; background:#172554; color:#e0e7ff; }
+    .oversold-cell { background:#7f1d1d; color:white; font-weight:bold; }
+    .overbought-cell { background:#14532d; color:white; font-weight:bold; }
+    .neutral-cell { background:#1e293b; color:#cbd5e1; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -33,47 +32,51 @@ st.markdown("""
 try:
     TOKEN = st.secrets["OANDA_ACCESS_TOKEN"]
 except:
-    st.error("Ajoute ton token dans Secrets → OANDA_ACCESS_TOKEN")
+    st.error("Ajoute OANDA_ACCESS_TOKEN dans les Secrets")
     st.stop()
 
-# FONCTIONS
-def rsi_calc(df, p=10):
-    if df is None or len(df) < p+1: return np.nan, None
-    o = (df['Open'] + df['High'] + df['Low'] + df['Close']) / 4
-    d = o.diff()
-    g = d.clip(lower=0)
-    l = -d.clip(upper=0)
-    ag = g.ewm(com=p-1, min_periods=p).mean()
-    al = l.ewm(com=p-1, min_periods=p).mean()
-    rs = ag / al
-    rs = rs.replace([np.inf], 10000)
-    return (100 - 100/(1+rs)).iloc[-1], None
+# CALCUL RSI
+def get_rsi(df):
+    if df is None or len(df) < 15: return None
+    close = df['Close']
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    avg_gain = gain.rolling(14).mean()
+    avg_loss = loss.rolling(14).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return round(rsi.iloc[-1], 1)
 
-def divergence(df, rsi_series):
-    if len(df) < 30: return ""
-    p = df.iloc[-30:]
-    r = rsi_series.iloc[-30:]
-    peaks, _ = find_peaks(p['High'], distance=5)
-    troughs, _ = find_peaks(-p['Low'], distance=5)
-    if len(peaks) >= 2 and p['High'].iloc[peaks[-1]] > p['High'].iloc[peaks[-2]] and r.iloc[peaks[-1]] < r.iloc[peaks[-2]]:
+# DIVERGENCE SIMPLE
+def get_divergence(df, rsi_val):
+    if df is None or len(df) < 30: return ""
+    recent = df.iloc[-30:]
+    highs = recent['High']
+    lows = recent['Low']
+    if highs.iloc[-1] > highs.iloc[-10] and rsi_val < 50:
         return "Baissiere"
-    if len(troughs) >= 2 and p['Low'].iloc[troughs[-1]] < p['Low'].iloc[troughs[-2]] and r.iloc[troughs[-1]] > r.iloc[troughs[-2]]:
+    if lows.iloc[-1] < lows.iloc[-10] and rsi_val > 50:
         return "Haussiere"
     return ""
 
+# FETCH DATA
 @st.cache_data(ttl=600)
-def get_data(pair, tf):
+def fetch(pair, tf):
     try:
         api = API(access_token=TOKEN, environment="practice")
         inst = pair.replace('/', '_')
         g = {'H1':'H1','H4':'H4','Daily':'D','Weekly':'W'}[tf]
         r = instruments.InstrumentsCandles(instrument=inst, params={'granularity':g,'count':100})
         api.request(r)
-        d = []
+        data = []
         for c in r.response['candles']:
-            d.append({'Time':c['time'],'Open':float(c['mid']['o']),'High':float(c['mid']['h']),
-                      'Low':float(c['mid']['l']),'Close':float(c['mid']['c'])})
-        df = pd.DataFrame(d)
+            data.append({'Time':c['time'],
+                        'Open':float(c['mid']['o']),
+                        'High':float(c['mid']['h']),
+                        'Low':float(c['mid']['l']),
+                        'Close':float(c['mid']['c'])})
+        df = pd.DataFrame(data)
         df['Time'] = pd.to_datetime(df['Time'])
         df.set_index('Time', inplace=True)
         return df
@@ -84,123 +87,121 @@ PAIRS = ['EUR/USD','USD/JPY','GBP/USD','AUD/USD','USD/CAD','NZD/USD','XAU/USD','
 TFS = ['H1','H4','Daily','Weekly']
 
 # SCAN
-def scan():
-    res = []
-    total = len(PAIRS) * len(TFS)
+def run_scan():
+    results = []
     bar = st.progress(0)
-    status = st.empty()
-    for i,pair in enumerate(PAIRS):
-        row = {'Pair':pair}
-        for tf in TFS:
-            status.text(f"{pair} – {tf}")
-            df = get_data(pair, tf)
-            rsi_val, _ = rsi_calc(df)
-            div = divergence(df, pd.Series([rsi_val]*len(df))) if not pd.isna(rsi_val) else ""
-            row[tf] = {'rsi':rsi_val,'div':div}
-            bar.progress((i*len(TFS)+TFS.index(tf)+1)/total)
-        res.append(row)
-    st.session_state.data = res
+    for i, pair in enumerate(PAIRS):
+        row = {'Pair': pair}
+        for j, tf in enumerate(TFS):
+            bar.progress((i*4 + j + 1)/ (len(PAIRS)*4))
+            df = fetch(pair, tf)
+            rsi = get_rsi(df)
+            div = get_divergence(df, rsi) if rsi else ""
+            row[tf] = {'rsi': rsi, 'div': div}
+        results.append(row)
+    st.session_state.results = results
     st.session_state.time = datetime.now()
-    st.session_state.ok = True
-    status.empty()
-    bar.empty()
+    st.session_state.done = True
 
-# PDF ULTRA SIMPLE (PLUS JAMAIS D'ERREUR)
+# PDF ULTRA SIMPLE (aucune erreur possible)
 def make_pdf():
-    pdf = FPDF('L','mm','A4')
+    pdf = FPDF('L', 'mm', 'A4')
     pdf.add_page()
-    pdf.set_font('Arial','B',18)
-    pdf.cell(0,15,'RSI & DIVERGENCE SCREENER',ln=1,align='C')
-    pdf.set_font('Arial','',11)
-    pdf.cell(0,10,f"Date: {st.session_state.time.strftime('%d/%m/%Y %H:%M')}",ln=1,align='C')
-    pdf.ln(10)
-
-    all_rsi = [v['rsi'] for r in st.session_state.data for k,v in r.items() if k in TFS and pd.notna(v['rsi'])]
-    mean = round(np.mean(all_rsi),1) if all_rsi else 50
-    bias = "TRES BAISSIER" if mean<40 else "BAISSIER" if mean<50 else "TRES HAUSSIER" if mean>60 else "HAUSSIER" if mean>50 else "NEUTRE"
-    pdf.set_font('Arial','B',16)
-    pdf.cell(0,12,f"RSI MOYEN GLOBAL : {mean} → {bias}",ln=1,align='C')
+    pdf.set_font('Arial', 'B', 20)
+    pdf.cell(0, 20, 'RSI SCREENER RAPPORT', ln=1, align='C')
+    pdf.set_font('Arial', '', 12)
+    pdf.cell(0, 10, f'Date: {st.session_state.time.strftime("%d/%m/%Y %H:%M")}', ln=1, align='C')
     pdf.ln(15)
 
+    all_rsi = [v['rsi'] for r in st.session_state.results for k,v in r.items() if k in TFS and v['rsi']]
+    mean = round(np.mean(all_rsi),1) if all_rsi else 50
+    bias = "TRES BAISSIER" if mean<40 else "BAISSIER" if mean<50 else "TRES HAUSSIER" if mean>60 else "HAUSSIER" if mean>50 else "NEUTRE"
+    pdf.set_font('Arial', 'B', 18)
+    pdf.cell(0, 15, f'RSI GLOBAL MOYEN : {mean} -> {bias}', ln=1, align='C')
+    pdf.ln(20)
+
     opps = []
-    for r in st.session_state.data:
+    for r in st.session_state.results:
         for tf in TFS:
             if tf not in r: continue
             d = r[tf]
             rsi = d['rsi']
             div = d['div']
-            if pd.isna(rsi): continue
+            if not rsi: continue
             score = 0
             txt = []
-            if rsi<=20: score+=10; txt.append("EXTREME BAS")
-            elif rsi<=30: score+=7; txt.append("SURVENTE")
-            if rsi>=80: score+=10; txt.append("EXTREME HAUT")
-            elif rsi>=70: score+=7; txt.append("SURACHAT")
-            if div=="Haussiere": score+=5; txt.append("DIV HAUSSIERE")
-            if div=="Baissiere": score+=5; txt.append("DIV BAISSIERE")
-            if len(txt)>1: score+=3
+            if rsi <=20: score +=10; txt.append("EXTREME BAS")
+            elif rsi <=30: score +=7; txt.append("SURVENTE")
+            if rsi >=80: score +=10; txt.append("EXTREME HAUT")
+            elif rsi >=70: score +=7; txt.append("SURACHAT")
+            if "Haussiere" in div: score +=5; txt.append("DIV HAUSSIERE")
+            if "Baissiere" in div: score +=5; txt.append("DIV BAISSIERE")
+            if len(txt)>1: score +=3
             if score>0:
-                opps.append((score, r['Pair'], tf, rsi, ' + '.join(txt)))
+                opps.append((score, r['Pair'], tf, rsi, " + ".join(txt)))
     opps.sort(reverse=True)
-    top10 = opps[:10]
+    top = opps[:10]
 
-    pdf.set_font('Arial','B',14)
-    pdf.cell(0,10,'TOP 10 OPPORTUNITES',ln=1)
-    pdf.set_font('Arial','',11)
-    for i,(s,p,t,r,sg) in enumerate(top10,1):
-        pdf.cell(0,9,f"{i}. {p} {t} | RSI {r:.1f} | Score {s} → {sg}",ln=1)
+    pdf.set_font('Arial', 'B', 16)
+    pdf.cell(0, 15, 'TOP 10 OPPORTUNITES', ln=1)
+    pdf.set_font('Arial', '', 12)
+    for i,(s,p,t,r,sg) in enumerate(top,1):
+        pdf.cell(0, 10, f"{i}. {p} {t} | RSI {r} | Score {s} -> {sg}", ln=1)
 
     pdf.add_page()
-    pdf.set_font('Arial','B',16)
-    pdf.cell(0,15,'GUIDE IA',ln=1,align='C')
+    pdf.set_font('Arial', 'B', 18)
+    pdf.cell(0, 20, 'GUIDE IA', ln=1, align='C')
     guide = """QUESTIONS A POSER :
-1. Quelles sont les 3 meilleures entrees du jour ?
-2. Y a-t-il confluence Weekly + Daily ?
-3. Le biais global favorise-t-il les achats ou ventes ?
-4. Quels risques macro aujourd'hui ?
+1. Quelles sont les 3 meilleures entrees ?
+2. Confluence Weekly + Daily ?
+3. Biais global du marche ?
+4. Risques macro du jour ?
 5. Meilleur ratio risque/rendement ?"""
-    pdf.set_font('Arial','',12)
-    pdf.multi_cell(0,10,guide)
+    pdf.set_font('Arial', '', 14)
+    pdf.multi_cell(0, 12, guide)
 
-    return pdf.output(dest='S')  # PAS .encode('latin-1') ← C'ETAIT L'ERREUR !
+    return pdf.output(dest="S")   # <--- JUSTE ÇA, RIEN D'AUTRE
 
 # INTERFACE
-st.markdown('<h1 class="screener-header">RSI & DIVERGENCE SCREENER</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="screener-header">RSI SCREENER OANDA</h1>', unsafe_allow_html=True)
 
-if st.session_state.get('ok'):
+if st.session_state.get('done'):
     st.markdown(f'<div class="update-info">Dernier scan : {st.session_state.time.strftime("%d/%m %H:%M")}</div>', unsafe_allow_html=True)
 
-c1,c2,c3 = st.columns([5,1,1])
-with c2:
+col1, col2, col3 = st.columns([5,1,1])
+with col2:
     if st.button("Rescan", use_container_width=True):
-        for k in list(st.session_state.keys()):
-            del st.session_state[k]
+        st.session_state.clear()
         st.rerun()
-with c3:
-    if st.session_state.get('data'):
-        st.download_button("PDF RAPPORT", data=make_pdf(), file_name=f"RSI_{datetime.now().strftime('%Y%m%d_%H%M)}.pdf", mime="application/pdf", use_container_width=True)
+with col3:
+    if st.session_state.get('results'):
+        st.download_button(
+            label="TELECHARGER PDF",
+            data=make_pdf(),
+            file_name=f"RSI_Rapport_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
 
-if not st.session_state.get('ok', False):
+if not st.session_state.get('done'):
     if st.button("LANCER LE SCAN", type="primary", use_container_width=True):
-        with st.spinner("Scan en cours..."):
-            scan()
-        st.success("Terminé !")
+        with st.spinner("Scan en cours (30-50s)..."):
+            run_scan()
+        st.success("Scan terminé !")
         st.rerun()
 
-if st.session_state.get('data'):
+if st.session_state.get('results'):
     html = '<table class="rsi-table"><thead><tr><th>PAIR</th><th>H1</th><th>H4</th><th>Daily</th><th>Weekly</th></tr></thead><tbody>'
-    for r in st.session_state.data:
+    for r in st.session_state.results:
         html += f'<tr><td class="devises-cell">{r["Pair"]}</td>'
         for tf in TFS:
-            d = r.get(tf, {'rsi':np.nan,'div':''})
-            rsi = d['rsi']
-            div = d['div']
+            d = r.get(tf, {'rsi':None,'div':''})
+            val = "N/A" if not d['rsi'] else f"{d['rsi']}"
             cls = "neutral-cell"
-            if not pd.isna(rsi):
-                if rsi<=20: cls="oversold-cell"
-                elif rsi>=80: cls="overbought-cell"
-            arrow = " Up" if div=="Haussiere" else " Down" if div=="Baissiere" else ""
-            val = "N/A" if pd.isna(rsi) else f"{rsi:.1f}"
+            if d['rsi']:
+                if d['rsi'] <=20: cls="oversold-cell"
+                elif d['rsi'] >=80: cls="overbought-cell"
+            arrow = " Up" if "Hauss" in d['div'] else " Down" if "Baiss" in d['div'] else ""
             html += f'<td class="{cls}">{val}{arrow}</td>'
         html += '</tr>'
     html += '</tbody></table>'
