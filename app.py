@@ -17,7 +17,7 @@ RSI_OVERSOLD = 30
 RSI_OVERBOUGHT = 70
 
 st.set_page_config(
-    page_title="RSI & Divergence Screener (OANDA)",
+    page_title="RSI & Divergence Screener",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -53,7 +53,7 @@ try:
     OANDA_ACCOUNT_ID = st.secrets["OANDA_ACCOUNT_ID"]
     OANDA_ACCESS_TOKEN = st.secrets["OANDA_ACCESS_TOKEN"]
 except KeyError:
-    st.error("🔑 Secrets OANDA non trouvés! Vérifiez votre fichier .streamlit/secrets.toml")
+    st.error("🔑 Secrets non trouvés! Vérifiez votre fichier .streamlit/secrets.toml")
     st.stop()
 
 # --- ASSETS CONFIG ---
@@ -204,10 +204,12 @@ def create_pdf_report(results_data, last_scan_time):
         def header(self):
             self.set_font('Arial', 'B', 16)
             self.set_text_color(20, 20, 20)
-            self.cell(0, 10, 'OANDA MARKET SCANNER - RAPPORT STRATEGIQUE', 0, 1, 'C')
+            # CHANGEMENT ICI: Suppression de OANDA
+            self.cell(0, 10, 'MARKET SCANNER - RAPPORT STRATEGIQUE', 0, 1, 'C')
             self.set_font('Arial', 'I', 9)
             self.set_text_color(100, 100, 100)
-            self.cell(0, 5, 'Genere le: ' + str(last_scan_time) + ' | Source: OANDA v20 Practice', 0, 1, 'C')
+            # CHANGEMENT ICI: Suppression de Source: OANDA
+            self.cell(0, 5, 'Genere le: ' + str(last_scan_time), 0, 1, 'C')
             self.ln(5)
         def footer(self):
             self.set_y(-15)
@@ -454,11 +456,11 @@ def create_pdf_report(results_data, last_scan_time):
 
 # --- MAIN APP UI ---
 
-st.markdown('<h1 class="screener-header">Screener RSI & Divergence (OANDA)</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="screener-header">Screener RSI & Divergence</h1>', unsafe_allow_html=True)
 
 if 'scan_done' in st.session_state and st.session_state.scan_done:
     last_scan_time_str = st.session_state.last_scan_time.strftime("%Y-%m-%d %H:%M:%S")
-    st.markdown('<div class="update-info">🔄 Dernière mise à jour: {} (OANDA)</div>'.format(last_scan_time_str), unsafe_allow_html=True)
+    st.markdown('<div class="update-info">🔄 Dernière mise à jour: {}</div>'.format(last_scan_time_str), unsafe_allow_html=True)
 
 col1, col2, col3 = st.columns([4, 1, 1])
 with col2:
@@ -534,7 +536,7 @@ if 'results' in st.session_state and st.session_state.results:
 
 with st.expander("ℹ️ Configuration", expanded=False):
     st.markdown(f"""
-    **Data Source:** OANDA v20 API (practice account)
+    **Data Source:** API Private
     **RSI Period:** {RSI_PERIOD} | **Source:** Close Price
     **Thresholds:** Oversold ≤ {RSI_OVERSOLD} | Overbought ≥ {RSI_OVERBOUGHT}
     **Divergence:** Last 30 candles
