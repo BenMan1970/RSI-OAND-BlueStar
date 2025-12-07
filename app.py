@@ -7,7 +7,6 @@ import warnings
 from oandapyV20 import API
 import oandapyV20.endpoints.instruments as instruments
 from scipy.signal import find_peaks
-from fpdf2 import FPDF
 import concurrent.futures
 warnings.filterwarnings('ignore')
 
@@ -133,539 +132,182 @@ def run_analysis_process():
     st.session_state.scan_done = True
     status_widget.empty()
     progress_widget.empty()
-
+# === REMPLACE TOUTE LA FONCTION create_pdf_report PAR CELLE-CI ===
 def create_pdf_report(results_data, last_scan_time):
+    from fpdf import FPDF
+
     class PDF(FPDF):
         def header(self):
             self.set_font('Arial', 'B', 16)
             self.set_text_color(0, 0, 0)
-            self.cell(0, 12, 'SCREENER RSI & DIVERGENCE - RAPPORT COMPLET', 0, 1, 'C')
+            self.cell(0, 12, 'SCREENER RSI & DIVERGENCE - RAPPORT COMPLET', ln=1, align='C')
             self.set_font('Arial', '', 9)
             self.set_text_color(80, 80, 80)
-            self.cell(0, 6, 'Genere le: ' + str(last_scan_time), 0, 1, 'C')
-            self.ln(3)
-       
+            self.cell(0, 6, f'Généré le : {last_scan_time}', ln=1, align='C')
+            self.ln(5)
+
         def footer(self):
             self.set_y(-15)
             self.set_font('Arial', 'I', 8)
             self.set_text_color(100, 100, 100)
-            self.cell(0, 10, 'Page ' + str(self.page_no()), 0, 0, 'C')
-   
+            self.cell(0, 10, f'Page {self.page_no()}', align='C')
+
     pdf = PDF(orientation='L', unit='mm', format='A4')
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-   
-    # Couleurs vives et intenses
-    COLOR_HEADER = (30, 30, 50)
-    COLOR_OVERSOLD = (220, 20, 20) # Rouge intense
-    COLOR_OVERBOUGHT = (20, 150, 70) # Vert intense
-    COLOR_NEUTRAL = (240, 240, 240)
-    COLOR_BULLISH = (0, 180, 0) # Vert vif
-    COLOR_BEARISH = (255, 0, 0) # Rouge vif
-   
-    # ============================================================================
-    # SECTION 1: RÉSUMÉ EXÉCUTIF
-    # ============================================================================
+    pdf.set_font('Arial', '', 10)
+
+    # Couleurs
+    R = lambda r,g,b: (r,g,b)
+    RED     = R(220,20,20)
+    GREEN   = R(20,150,70)
+    BLUE    = R(30,30,100)
+    GRAY    = R(100,100,100)
+
+    # =============================================
+    # 1. RÉSUMÉ EXÉCUTIF
+    # =============================================
     pdf.set_font('Arial', 'B', 14)
-    pdf.set_text_color(0, 0, 0)
     pdf.set_fill_color(230, 230, 250)
-    pdf.cell(0, 10, 'RESUME EXECUTIF', 0, 1, 'L', True)
-    pdf.ln(3)
-   
-    # Calcul RSI moyen global et biais marché
-    all_rsi_values = []
-    for row in results_data:
-        for tf in TIMEFRAMES_DISPLAY:
-            cell_data = row.get(tf, {})
-            rsi_val = cell_data.get('rsi', np.nan)
-            if pd.notna(rsi_val):
-                all_rsi_values.append(rsi_val)
-   
-    if all_rsi_values:
-        rsi_moyen_global = np.mean(all_rsi_values)
-        rsi_median = np.median(all_rsi_values)
-       
-        # Déterminer le biais marché
-        if rsi_moyen_global < 40:
-            biais_marche = "FORTEMENT BAISSIER"
-            biais_color = COLOR_BEARISH
-        elif rsi_moyen_global < 50:
-            biais_marche = "BAISSIER"
-            biais_color = COLOR_BEARISH
-        elif rsi_moyen_global > 60:
-            biais_marche = "FORTEMENT HAUSSIER"
-            biais_color = COLOR_BULLISH
-        elif rsi_moyen_global > 50:
-            biais_marche = "HAUSSIER"
-            biais_color = COLOR_BULLISH
+    pdf.cell(0, 10, 'RÉSUMÉ EXÉCUTIF', ln=1, fill=True)
+
+    all_rsi = [row[tf].get('rsi') for row in results_data for tf in TIMEFRAMES_DISPLAY 
+               if pd.notna(row[tf].get('rsi'))]
+
+    if all_rsi:
+        mean_rsi = np.mean(all_rsi)
+        if mean_rsi < 40:
+            biais = "FORTEMENT BAISSIER"; col = RED
+        elif mean_rsi < 50:
+            biais = "BAISSIER"; col = RED
+        elif mean_rsi > 60:
+            biais = "FORTEMENT HAUSSIER"; col = GREEN
+        elif mean_rsi > 50:
+            biais = "HAUSSIER"; col = GREEN
         else:
-            biais_marche = "NEUTRE"
-            biais_color = (100, 100, 100)
-       
-        # Affichage RSI moyen
+            biais = "NEUTRE"; col = GRAY
+
         pdf.set_font('Arial', 'B', 11)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(70, 8, 'RSI Moyen Global:', 0, 0, 'L')
-        pdf.set_font('Arial', 'B', 12)
-        pdf.set_text_color(*biais_color)
-        pdf.cell(30, 8, '{:.2f}'.format(rsi_moyen_global), 0, 0, 'L')
-        pdf.set_font('Arial', '', 10)
-        pdf.set_text_color(80, 80, 80)
-        pdf.cell(0, 8, '(Mediane: {:.2f})'.format(rsi_median), 0, 1, 'L')
-       
-        # Biais marché
-        pdf.set_font('Arial', 'B', 11)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(70, 8, 'Biais Marche:', 0, 0, 'L')
-        pdf.set_font('Arial', 'B', 12)
-        pdf.set_text_color(*biais_color)
-        pdf.cell(0, 8, biais_marche, 0, 1, 'L')
-       
-        pdf.ln(2)
-   
-    # Compter les signaux globaux
-    total_oversold = sum(1 for v in all_rsi_values if v <= 30)
-    total_overbought = sum(1 for v in all_rsi_values if v >= 70)
-    total_extreme_oversold = sum(1 for v in all_rsi_values if v <= 20)
-    total_extreme_overbought = sum(1 for v in all_rsi_values if v >= 80)
-   
-    total_bull_div = sum(1 for row in results_data for tf in TIMEFRAMES_DISPLAY if row.get(tf, {}).get('divergence') == 'Haussière')
-    total_bear_div = sum(1 for row in results_data for tf in TIMEFRAMES_DISPLAY if row.get(tf, {}).get('divergence') == 'Baissière')
-   
-    # Affichage signaux globaux avec couleurs vives
+        pdf.cell(0, 8, f'RSI Moyen Global : {mean_rsi:.2f} → {biais}', ln=1)
+        pdf.ln(3)
+
+    # Signaux globaux
+    oversold   = sum(1 for v in all_rsi if v <= 30)
+    extreme_os = sum(1 for v in all_rsi if v <= 20)
+    overbought = sum(1 for v in all_rsi if v >= 70)
+    extreme_ob = sum(1 for v in all_rsi if v >= 80)
+    bull_div   = sum(1 for r in results_data for tf in TIMEFRAMES_DISPLAY if r.get(tf, {}).get('divergence') == 'Haussière')
+    bear_div   = sum(1 for r in results_data for tf in TIMEFRAMES_DISPLAY if r.get(tf, {}).get('divergence') == 'Baissière')
+
     pdf.set_font('Arial', 'B', 10)
-    pdf.set_text_color(0, 0, 0)
-    pdf.cell(0, 7, 'Signaux Globaux:', 0, 1, 'L')
-    pdf.set_font('Arial', '', 9)
-   
-    pdf.set_text_color(*COLOR_OVERSOLD)
-    pdf.cell(0, 6, ' Survente (<30): {} signaux | Extreme (<20): {} signaux'.format(total_oversold, total_extreme_oversold), 0, 1, 'L')
-   
-    pdf.set_text_color(*COLOR_OVERBOUGHT)
-    pdf.cell(0, 6, ' Surachat (>70): {} signaux | Extreme (>80): {} signaux'.format(total_overbought, total_extreme_overbought), 0, 1, 'L')
-   
-    pdf.set_text_color(*COLOR_BULLISH)
-    pdf.cell(0, 6, ' Divergences Haussieres: {} signaux'.format(total_bull_div), 0, 1, 'L')
-   
-    pdf.set_text_color(*COLOR_BEARISH)
-    pdf.cell(0, 6, ' Divergences Baissieres: {} signaux'.format(total_bear_div), 0, 1, 'L')
-   
-    pdf.ln(5)
-   
-    # ============================================================================
-    # SECTION 2: STATISTIQUES DÉTAILLÉES PAR TIMEFRAME
-    # ============================================================================
+    pdf.set_text_color(*RED)
+    pdf.cell(0, 6, f'Survente (<30) : {oversold} | Extrême (<20) : {extreme_os}', ln=1)
+    pdf.set_text_color(*GREEN)
+    pdf.cell(0, 6, f'Surachat (>70) : {overbought} | Extrême (>80) : {extreme_ob}', ln=1)
+    pdf.set_text_color(0, 180, 0)
+    pdf.cell(0, 6, f'Divergences Haussières : {bull_div}', ln=1)
+    pdf.set_text_color(255, 0, 0)
+    pdf.cell(0, 6, f'Divergences Baissières : {bear_div}', ln=1)
+    pdf.ln(8)
+
+    # =============================================
+    # 2. TOP 15 OPPORTUNITÉS (SCORING SIMPLE)
+    # =============================================
     pdf.set_font('Arial', 'B', 14)
-    pdf.set_text_color(0, 0, 0)
     pdf.set_fill_color(230, 230, 250)
-    pdf.cell(0, 10, 'STATISTIQUES PAR TIMEFRAME', 0, 1, 'L', True)
-    pdf.ln(3)
-   
-    stats_by_tf = {}
-    for tf in TIMEFRAMES_DISPLAY:
-        tf_data = [row.get(tf, {}) for row in results_data]
-        valid_rsi = [d.get('rsi') for d in tf_data if pd.notna(d.get('rsi'))]
-       
-        oversold = sum(1 for x in valid_rsi if x <= 30)
-        overbought = sum(1 for x in valid_rsi if x >= 70)
-        extreme_oversold = sum(1 for x in valid_rsi if x <= 20)
-        extreme_overbought = sum(1 for x in valid_rsi if x >= 80)
-       
-        bull_div = sum(1 for d in tf_data if d.get('divergence') == 'Haussière')
-        bear_div = sum(1 for d in tf_data if d.get('divergence') == 'Baissière')
-       
-        rsi_mean = np.mean(valid_rsi) if valid_rsi else 0
-       
-        stats_by_tf[tf] = {
-            'oversold': oversold,
-            'overbought': overbought,
-            'extreme_oversold': extreme_oversold,
-            'extreme_overbought': extreme_overbought,
-            'bull_div': bull_div,
-            'bear_div': bear_div,
-            'rsi_mean': rsi_mean
-        }
-   
-    for tf, stats in stats_by_tf.items():
-        pdf.set_font('Arial', 'B', 11)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(0, 7, 'Timeframe: {}'.format(tf), 0, 1, 'L')
-       
-        pdf.set_font('Arial', '', 9)
-        pdf.set_text_color(80, 80, 80)
-        pdf.cell(0, 5, ' RSI Moyen: {:.2f}'.format(stats['rsi_mean']), 0, 1, 'L')
-       
-        pdf.set_text_color(*COLOR_OVERSOLD)
-        pdf.cell(0, 5, ' Survente: {} (<30) | Extreme: {} (<20)'.format(stats['oversold'], stats['extreme_oversold']), 0, 1, 'L')
-       
-        pdf.set_text_color(*COLOR_OVERBOUGHT)
-        pdf.cell(0, 5, ' Surachat: {} (>70) | Extreme: {} (>80)'.format(stats['overbought'], stats['extreme_overbought']), 0, 1, 'L')
-       
-        pdf.set_text_color(*COLOR_BULLISH)
-        pdf.cell(0, 5, ' Divergences Haussieres: {}'.format(stats['bull_div']), 0, 1, 'L')
-       
-        pdf.set_text_color(*COLOR_BEARISH)
-        pdf.cell(0, 5, ' Divergences Baissieres: {}'.format(stats['bear_div']), 0, 1, 'L')
-       
-        pdf.ln(2)
-   
-    pdf.ln(3)
-   
-    # ============================================================================
-    # SECTION 3: TOP 15 OPPORTUNITÉS AVEC SCORING
-    # ============================================================================
-    pdf.set_font('Arial', 'B', 14)
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_fill_color(230, 230, 250)
-    pdf.cell(0, 10, 'TOP 15 OPPORTUNITES (SCORING)', 0, 1, 'L', True)
-    pdf.ln(3)
-   
-    # Calcul des opportunités avec scoring amélioré
-    opportunities = []
+    pdf.cell(0, 10, 'TOP 15 OPPORTUNITÉS', ln=1, fill=True)
+    pdf.ln(2)
+
+    opps = []
     for row in results_data:
         for tf in TIMEFRAMES_DISPLAY:
-            cell_data = row.get(tf, {})
-            rsi_val = cell_data.get('rsi', np.nan)
-            divergence = cell_data.get('divergence', 'Aucune')
-           
-            if pd.notna(rsi_val):
-                score = 0
-                signal_parts = []
-               
-                # Scoring RSI
-                if rsi_val <= 20:
-                    score += 10
-                    signal_parts.append("RSI EXTREME BAS")
-                elif rsi_val <= 30:
-                    score += 7
-                    signal_parts.append("RSI SURVENTE")
-                elif rsi_val >= 80:
-                    score += 10
-                    signal_parts.append("RSI EXTREME HAUT")
-                elif rsi_val >= 70:
-                    score += 7
-                    signal_parts.append("RSI SURACHAT")
-               
-                # Scoring Divergences
-                if divergence == 'Haussière':
-                    score += 5
-                    signal_parts.append("DIV BULL")
-                elif divergence == 'Baissière':
-                    score += 5
-                    signal_parts.append("DIV BEAR")
-               
-                # Bonus pour signaux multiples
-                if len(signal_parts) > 1:
-                    score += 3
-               
-                if score > 0:
-                    opportunities.append({
-                        'asset': row['Devises'],
-                        'tf': tf,
-                        'rsi': rsi_val,
-                        'signal': ' + '.join(signal_parts),
-                        'score': score,
-                        'divergence': divergence
-                    })
-   
-    # Trier par score décroissant
-    opportunities.sort(key=lambda x: (-x['score'], abs(50 - x['rsi'])))
-    top_opps = opportunities[:15]
-   
-    if top_opps:
-        # En-tête du tableau
+            d = row.get(tf, {})
+            rsi = d.get('rsi')
+            div = d.get('divergence', 'Aucune')
+            if pd.isna(rsi): continue
+
+            score = 0
+            txt = []
+            if rsi <= 20:    score += 10; txt.append("RSI EXTRÊME BAS")
+            elif rsi <= 30:  score += 7;  txt.append("SURVENTE")
+            elif rsi >= 80:  score += 10; txt.append("RSI EXTRÊME HAUT")
+            elif rsi >= 70:  score += 7;  txt.append("SURACHAT")
+
+            if div == 'Haussière':  score += 5; txt.append("DIV BULL")
+            if div == 'Baissière':  score += 5; txt.append("DIV BEAR")
+
+            if len(txt) > 1: score += 3
+
+            if score > 0:
+                opps.append((score, abs(rsi-50), row['Devises'], tf, rsi, ' + '.join(txt)))
+
+    opps.sort(reverse=True)
+    top15 = opps[:15]
+
+    if top15:
         pdf.set_font('Arial', 'B', 9)
-        pdf.set_fill_color(*COLOR_HEADER)
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(10, 8, '#', 1, 0, 'C', True)
-        pdf.cell(40, 8, 'Actif', 1, 0, 'C', True)
-        pdf.cell(15, 8, 'TF', 1, 0, 'C', True)
-        pdf.cell(20, 8, 'RSI', 1, 0, 'C', True)
+        pdf.set_fill_color(30,30,50)
+        pdf.set_text_color(255,255,255)
+        pdf.cell(12, 8, '#', 1, 0, 'C', True)
+        pdf.cell(50, 8, 'Actif', 1, 0, 'C', True)
+        pdf.cell(20, 8, 'TF', 1, 0, 'C', True)
+        pdf.cell(25, 8, 'RSI', 1, 0, 'C', True)
         pdf.cell(20, 8, 'Score', 1, 0, 'C', True)
         pdf.cell(0, 8, 'Signal', 1, 1, 'C', True)
-       
+
         pdf.set_font('Arial', '', 9)
-        for i, opp in enumerate(top_opps, 1):
-            # Couleur de fond selon le type de signal
-            if opp['rsi'] <= 30:
-                pdf.set_fill_color(255, 200, 200) # Rouge clair
-                pdf.set_text_color(*COLOR_OVERSOLD)
-            elif opp['rsi'] >= 70:
-                pdf.set_fill_color(200, 255, 200) # Vert clair
-                pdf.set_text_color(*COLOR_OVERBOUGHT)
+        for i, (_, _, asset, tf, rsi, signal) in enumerate(top15, 1):
+            if rsi <= 30:
+                pdf.set_text_color(*RED)
+                pdf.set_fill_color(255,220,220)
             else:
-                pdf.set_fill_color(245, 245, 245)
-                pdf.set_text_color(0, 0, 0)
-           
-            pdf.cell(10, 7, str(i), 1, 0, 'C', True)
-            pdf.set_text_color(0, 0, 0)
-            pdf.cell(40, 7, opp['asset'], 1, 0, 'L', True)
-            pdf.cell(15, 7, opp['tf'], 1, 0, 'C', True)
-           
-            # RSI avec couleur
-            if opp['rsi'] <= 30:
-                pdf.set_text_color(*COLOR_OVERSOLD)
-            elif opp['rsi'] >= 70:
-                pdf.set_text_color(*COLOR_OVERBOUGHT)
-            pdf.cell(20, 7, '{:.2f}'.format(opp['rsi']), 1, 0, 'C', True)
-           
-            # Score avec couleur gradient
-            pdf.set_text_color(0, 0, 0)
-            pdf.set_font('Arial', 'B', 9)
-            pdf.cell(20, 7, str(opp['score']), 1, 0, 'C', True)
-           
-            pdf.set_font('Arial', '', 8)
-            pdf.cell(0, 7, opp['signal'], 1, 1, 'L', True)
+                pdf.set_text_color(*GREEN)
+                pdf.set_fill_color(220,255,220)
+
+            pdf.cell(12, 7, str(i), 1, 0, 'C', True)
+            pdf.cell(50, 7, asset, 1, 0, 'L', True)
+            pdf.cell(20, 7, tf, 1, 0, 'C', True)
+            pdf.cell(25, 7, f'{rsi:.2f}', 1, 0, 'C', True)
+            pdf.cell(20, 7, str(score), 1, 0, 'C', True)
+            pdf.cell(0, 7, signal, 1, 1, 'L', True)
     else:
-        pdf.set_font('Arial', 'I', 10)
-        pdf.set_text_color(100, 100, 100)
-        pdf.cell(0, 8, 'Aucune opportunite significative detectee', 0, 1, 'L')
-   
-    # ============================================================================
-    # NOUVELLE PAGE: GUIDE COMPLET POUR L'IA
-    # ============================================================================
+        pdf.set_font('Arial', 'I', 11)
+        pdf.cell(0, 8, 'Aucune opportunité détectée pour le moment', ln=1)
+
+    # =============================================
+    # 3. GUIDE IA (texte brut, très lisible par toi ou moi)
+    # =============================================
     pdf.add_page()
     pdf.set_font('Arial', 'B', 16)
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_fill_color(255, 220, 100)
-    pdf.cell(0, 12, 'GUIDE COMPLET POUR L\'ANALYSE IA', 0, 1, 'C', True)
-    pdf.ln(5)
-   
-    # Section 1: Interprétation des métriques RSI
-    pdf.set_font('Arial', 'B', 12)
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_fill_color(230, 240, 255)
-    pdf.cell(0, 8, '1. INTERPRETATION DES METRIQUES RSI', 0, 1, 'L', True)
-    pdf.ln(2)
-   
-    pdf.set_font('Arial', 'B', 10)
-    pdf.set_text_color(*COLOR_OVERSOLD)
-    pdf.cell(0, 6, 'Zones de Survente (RSI < 30):', 0, 1, 'L')
-    pdf.set_font('Arial', '', 9)
-    pdf.set_text_color(0, 0, 0)
-    pdf.multi_cell(0, 5, ' - RSI < 20: EXTREME - Signal d\'achat tres fort, potentiel rebond imminent\n - RSI 20-30: MODERE - Signal d\'achat, attendre confirmation\n - Action: Rechercher des signaux de retournement (divergences, patterns chandelier)')
-    pdf.ln(2)
-   
-    pdf.set_font('Arial', 'B', 10)
-    pdf.set_text_color(*COLOR_OVERBOUGHT)
-    pdf.cell(0, 6, 'Zones de Surachat (RSI > 70):', 0, 1, 'L')
-    pdf.set_font('Arial', '', 9)
-    pdf.set_text_color(0, 0, 0)
-    pdf.multi_cell(0, 5, ' - RSI > 80: EXTREME - Signal de vente tres fort, correction probable\n - RSI 70-80: MODERE - Signal de vente, surveiller\n - Action: Envisager prise de profits ou positions short')
-    pdf.ln(2)
-   
-    pdf.set_font('Arial', 'B', 10)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, 'Zone Neutre (RSI 30-70):', 0, 1, 'L')
-    pdf.set_font('Arial', '', 9)
-    pdf.set_text_color(0, 0, 0)
-    pdf.multi_cell(0, 5, ' - Pas de signal clair de surachat/survente\n - Analyser les divergences et tendances pour identifier opportunites')
-    pdf.ln(3)
-   
-    # Section 2: Divergences
-    pdf.set_font('Arial', 'B', 12)
-    pdf.set_fill_color(230, 255, 230)
-    pdf.cell(0, 8, '2. INTERPRETATION DES DIVERGENCES', 0, 1, 'L', True)
-    pdf.ln(2)
-   
-    pdf.set_font('Arial', 'B', 10)
-    pdf.set_text_color(*COLOR_BULLISH)
-    pdf.cell(0, 6, 'Divergence Haussiere (BULL):', 0, 1, 'L')
-    pdf.set_font('Arial', '', 9)
-    pdf.set_text_color(0, 0, 0)
-    pdf.multi_cell(0, 5, ' - Definition: Prix fait des creux plus bas MAIS RSI fait des creux plus hauts\n - Signification: La pression vendeuse s\'affaiblit, potentiel retournement haussier\n - Action: Signal d\'ACHAT - Entrer en position longue avec stop-loss sous dernier creux\n - Force maximale: Quand combinee avec RSI < 30 (survente)')
-    pdf.ln(2)
-   
-    pdf.set_font('Arial', 'B', 10)
-    pdf.set_text_color(*COLOR_BEARISH)
-    pdf.cell(0, 6, 'Divergence Baissiere (BEAR):', 0, 1, 'L')
-    pdf.set_font('Arial', '', 9)
-    pdf.set_text_color(0, 0, 0)
-    pdf.multi_cell(0, 5, ' - Definition: Prix fait des sommets plus hauts MAIS RSI fait des sommets plus bas\n - Signification: La pression acheteuse s\'affaiblit, potentiel retournement baissier\n - Action: Signal de VENTE - Entrer en position short avec stop-loss au-dessus dernier sommet\n - Force maximale: Quand combinee avec RSI > 70 (surachat)')
-    pdf.ln(3)
-   
-    # Section 3: Scoring et priorisation
-    pdf.set_font('Arial', 'B', 12)
-    pdf.set_fill_color(255, 240, 230)
-    pdf.cell(0, 8, '3. SYSTEME DE SCORING ET PRIORISATION', 0, 1, 'L', True)
-    pdf.ln(2)
-   
-    pdf.set_font('Arial', '', 9)
-    pdf.set_text_color(0, 0, 0)
-    pdf.multi_cell(0, 5, 'Le score calcule la force du signal:\n\n Score 10+ (TRES FORT):\n - RSI extreme (<20 ou >80) seul = 10 pts\n - RSI extreme + divergence = 15 pts\n - Action: Opportunite prioritaire, analyser immediatement\n\n Score 7-9 (FORT):\n - RSI modere (<30 ou >70) = 7 pts\n - RSI modere + divergence = 12 pts\n - Action: Bonne opportunite, valider avec contexte\n\n Score 5-6 (MOYEN):\n - Divergence seule = 5 pts\n - Action: Signal interessant mais necessitant confirmation\n\n Bonus +3: Signaux multiples (RSI + divergence)')
-    pdf.ln(3)
-   
-    # Section 4: Analyse multi-timeframe
-    pdf.set_font('Arial', 'B', 12)
-    pdf.set_fill_color(240, 230, 255)
-    pdf.cell(0, 8, '4. ANALYSE MULTI-TIMEFRAME', 0, 1, 'L', True)
-    pdf.ln(2)
-   
-    pdf.set_font('Arial', '', 9)
-    pdf.multi_cell(0, 5, 'Comment interpreter les differents timeframes:\n\n Weekly (W1) - Vision macro:\n - Definit la tendance de fond\n - Signaux les plus fiables mais plus lents\n - Ideal pour: Positions long-terme, identification de retournements majeurs\n\n Daily (D1) - Vision intermediaire:\n - Equilibre entre fiabilite et reactivite\n - Confirme ou infirme les signaux court terme\n - Ideal pour: Swing trading, validation des entrees\n\n H4 - Vision court terme:\n - Signaux plus frequents mais moins fiables\n - Bon pour timing d\'entree precis\n - Ideal pour: Day trading, optimisation des points d\'entree\n\n H1 - Vision tres court terme:\n - Signaux tres reactifs mais bruites\n - Utiliser uniquement pour timing intraday\n - Ideal pour: Scalping, ajustements rapides')
-    pdf.ln(3)
-   
-    # Section 5: Confluence de signaux
-    pdf.set_font('Arial', 'B', 12)
-    pdf.set_fill_color(255, 230, 230)
-    pdf.cell(0, 8, '5. RECHERCHE DE CONFLUENCE (SIGNAUX CONCORDANTS)', 0, 1, 'L', True)
-    pdf.ln(2)
-   
-    pdf.set_font('Arial', '', 9)
-    pdf.multi_cell(0, 5, 'Les meilleurs trades combinent plusieurs signaux:\n\n Confluence MAXIMALE (Score 20+):\n - RSI extreme sur 2+ timeframes\n - Divergence sur timeframe superieur\n - Exemple: EUR/USD survente (<20) en Daily + H4 avec div bull en Daily\n\n Confluence FORTE (Score 15-20):\n - RSI extreme sur 1 TF + RSI modere sur TF superieur\n - Divergence confirmee sur 2 TF\n\n Signaux CONTRADICTOIRES (a eviter):\n - RSI survente en H1 mais surachat en Daily\n - Divergence bull en H4 mais bear en Daily\n - Action: Attendre clarification ou eviter le trade')
-    pdf.ln(3)
-   
-    # Section 6: Contexte de marché
-    pdf.set_font('Arial', 'B', 12)
-    pdf.set_fill_color(230, 255, 255)
-    pdf.cell(0, 8, '6. INTEGRATION DU CONTEXTE MARCHE', 0, 1, 'L', True)
-    pdf.ln(2)
-   
-    pdf.set_font('Arial', '', 9)
-    pdf.multi_cell(0, 5, 'Elements contextuels a considerer:\n\n Biais Marche Global:\n - RSI moyen < 40: Marche baissier - Privilegier signaux de vente\n - RSI moyen > 60: Marche haussier - Privilegier signaux d\'achat\n - RSI moyen 40-60: Marche neutre - Trader les extremes\n\n Calendrier Economique:\n - Avant annonce majeure: Reduire positions ou eviter nouveaux trades\n - Apres annonce: Attendre stabilisation (15-30min) avant d\'agir\n\n Correlations:\n - USD fort + survente EUR/USD = opportunite achat limitee\n - Or survente + indices surachetes = potentiel risk-off\n\n Sentiment:\n - Beaucoup de surventes = capitulation possible (bullish)\n - Beaucoup de surachats = euphorie (bearish)')
-    pdf.ln(3)
-   
-    # Section 7: Questions clés pour l'IA
-    pdf.add_page()
-    pdf.set_font('Arial', 'B', 14)
-    pdf.set_fill_color(255, 220, 100)
-    pdf.cell(0, 10, 'QUESTIONS CLES POUR ANALYSE IA', 0, 1, 'L', True)
-    pdf.ln(3)
-   
-    questions = [
-        ('Analyse des Top Opportunites', [
-            'Quelles sont les 3 opportunites avec le score le plus eleve?',
-            'Ces opportunites sont-elles confirmees sur plusieurs timeframes?',
-            'Y a-t-il des risques specifiques a chaque opportunite?'
-        ]),
-        ('Confluence Multi-Timeframe', [
-            'Quels actifs montrent des signaux concordants sur 2+ timeframes?',
-            'Y a-t-il des divergences entre timeframes courts et longs?',
-            'Quel timeframe offre le meilleur ratio risque/rendement?'
-        ]),
-        ('Contexte de Marche', [
-            'Le biais marche global favorise-t-il les achats ou ventes?',
-            'Y a-t-il une concentration sectorielle des signaux?',
-            'Les correlations habituelles sont-elles respectees?'
-        ]),
-        ('Gestion du Risque', [
-            'Quels trades ont le meilleur ratio score/risque?',
-            'Y a-t-il trop de positions dans une meme direction?',
-            'Quel serait l\'impact d\'une annonce economique majeure?'
-        ]),
-        ('Timing d\'Execution', [
-            'Quels trades sont a executer en priorite (score + timing)?',
-            'Quels signaux necessitent une confirmation supplementaire?',
-            'Y a-t-il des trades a eviter malgre un score eleve?'
-        ])
-    ]
-   
-    for section, qs in questions:
-        pdf.set_font('Arial', 'B', 11)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(0, 7, section + ':', 0, 1, 'L')
-        pdf.set_font('Arial', '', 9)
-        for q in qs:
-            pdf.cell(5, 5, '', 0, 0)
-            pdf.multi_cell(0, 5, '- ' + q)
-        pdf.ln(2)
-   
-    # Section 8: Template d'analyse
-    pdf.ln(3)
-    pdf.set_font('Arial', 'B', 12)
-    pdf.set_fill_color(240, 240, 240)
-    pdf.cell(0, 8, 'TEMPLATE D\'ANALYSE QUOTIDIENNE', 0, 1, 'L', True)
-    pdf.ln(2)
-   
-    pdf.set_font('Arial', '', 9)
-    pdf.multi_cell(0, 5, 'Pour chaque opportunite Top 5:\n\n1. Actif: _______________\n2. Score: ___ | RSI: ___ | Timeframe: ___\n3. Type signal: Survente / Surachat / Divergence\n4. Confluence TF: Oui / Non - Details: _______________\n5. Coherence avec biais marche: Oui / Non')
+    pdf.set_fill_color(255, 200, 80)
+    pdf.cell(0, 12, 'GUIDE COMPLET POUR L\'ANALYSE IA', ln=1, fill=True, align='C')
+    pdf.ln(8)
 
-    return bytes(pdf.output())
+    guide_text = """
+INTERPRÉTATION RAPIDE :
 
-st.markdown('<h1 class="screener-header">Screener RSI & Divergence (OANDA)</h1>', unsafe_allow_html=True)
+• RSI < 20 → EXTRÊME SURVENTE → très fort signal d'achat (surtout avec div bull)
+• RSI > 80 → EXTRÊME SURACHAT → très fort signal de vente (surtout avec div bear)
+• Divergence Haussière + RSI bas → priorité absolue
+• Divergence Baissière + RSI haut → priorité absolue
 
-if 'scan_done' in st.session_state and st.session_state.scan_done:
-    last_scan_time_str = st.session_state.last_scan_time.strftime("%Y-%m-%d %H:%M:%S")
-    st.markdown('<div class="update-info">🔄 Dernière mise à jour: {} (OANDA)</div>'.format(last_scan_time_str), unsafe_allow_html=True)
+QUESTIONS À ME POSER (copie-colle direct) :
 
-col1, col2, col3 = st.columns([4, 1, 1])
-with col2:
-    if st.button("🔄 Rescan", use_container_width=True):
-        st.session_state.scan_done = False
-        st.cache_data.clear()
-        st.rerun()
+1. Quelles sont les 3 meilleures opportunités du jour (score + confluence) ?
+2. Y a-t-il des actifs avec signaux identiques sur Weekly + Daily ?
+3. Le biais global du marché (RSI moyen) favorise-t-il les achats ou les ventes ?
+4. Quels sont les risques macro risques aujourd'hui (news, banques centrales...) ?
+5. Quels trades offrent le meilleur ratio risque/rendement ?
 
-with col3:
-    if 'results' in st.session_state and st.session_state.results:
-        st.download_button(
-            label="📄 PDF",
-            data=create_pdf_report(st.session_state.results, st.session_state.last_scan_time.strftime("%d/%m/%Y %H:%M:%S")),
-            file_name="RSI_Report_{}.pdf".format(datetime.now().strftime('%Y%m%d_%H%M')),
-            mime="application/pdf",
-            use_container_width=True
-        )
+TEMPLATE D'ANALYSE (à remplir) :
+Actif : 
+Score :     RSI :     TF : 
+Confluence multi-TF : Oui/Non
+Compatibilité avec biais marché : Oui/Non
+Décision : ACHAT / VENTE / ATTENDRE
+"""
 
-if 'scan_done' not in st.session_state or not st.session_state.scan_done:
-    if st.button("🚀 Lancer le scan", use_container_width=True):
-        with st.spinner("Scan en cours..."):
-            run_analysis_process()
-        st.success("Analyse terminée!")
-        st.rerun()
-    elif 'scan_done' in st.session_state and not st.session_state.scan_done:
-        with st.spinner("Scan en cours..."):
-            run_analysis_process()
-        st.success("Analyse terminée!")
-        st.rerun()
+    pdf.set_font('Arial', '', 10)
+    pdf.multi_cell(0, 6, guide_text)
 
-if 'results' in st.session_state and st.session_state.results:
-    st.markdown("""<div class="legend-container">
-        <div class="legend-item"><div class="legend-dot oversold-dot"></div><span>Oversold (RSI ≤ 20)</span></div>
-        <div class="legend-item"><div class="legend-dot overbought-dot"></div><span>Overbought (RSI ≥ 80)</span></div>
-        <div class="legend-item"><span class="divergence-arrow bullish-arrow">↑</span><span>Bullish Divergence</span></div>
-        <div class="legend-item"><span class="divergence-arrow bearish-arrow">↓</span><span>Bearish Divergence</span></div>
-    </div>""", unsafe_allow_html=True)
-    
-    st.markdown("### 📈 RSI & Divergence Analysis Results")
-    html_table = '<table class="rsi-table"><thead><tr><th>Devises</th>'
-    for tf in TIMEFRAMES_DISPLAY: 
-        html_table += '<th>{}</th>'.format(tf)
-    html_table += '</tr></thead><tbody>'
-    
-    for row in st.session_state.results:
-        html_table += '<tr><td class="devises-cell">{}</td>'.format(row["Devises"])
-        for tf in TIMEFRAMES_DISPLAY:
-            cell_data = row.get(tf, {'rsi': np.nan, 'divergence': 'Aucune'})
-            rsi_val = cell_data.get('rsi', np.nan)
-            divergence = cell_data.get('divergence', 'Aucune')
-            css_class = get_rsi_class(rsi_val)
-            formatted_val = format_rsi(rsi_val)
-            divergence_icon = '<span class="divergence-arrow bullish-arrow">↑</span>' if divergence == "Haussière" else ('<span class="divergence-arrow bearish-arrow">↓</span>' if divergence == "Baissière" else "")
-            html_table += '<td class="{}">{} {}</td>'.format(css_class, formatted_val, divergence_icon)
-        html_table += '</tr>'
-    html_table += '</tbody></table>'
-    st.markdown(html_table, unsafe_allow_html=True)
-    
-    st.markdown("### 📊 Signal Statistics")
-    stat_cols = st.columns(len(TIMEFRAMES_DISPLAY))
-    for i, tf in enumerate(TIMEFRAMES_DISPLAY):
-        tf_data = [row.get(tf, {}) for row in st.session_state.results]
-        valid_rsi = [d.get('rsi') for d in tf_data if pd.notna(d.get('rsi'))]
-        bull_div = sum(1 for d in tf_data if d.get('divergence') == 'Haussière')
-        bear_div = sum(1 for d in tf_data if d.get('divergence') == 'Baissière')
-        if valid_rsi:
-            oversold = sum(1 for x in valid_rsi if x <= 20)
-            overbought = sum(1 for x in valid_rsi if x >= 80)
-            total = oversold + overbought + bull_div + bear_div
-            delta_text = "🔴 {} S | 🟢 {} B | ↑ {} | ↓ {}".format(oversold, overbought, bull_div, bear_div)
-            with stat_cols[i]:
-                st.metric(label="Signals {}".format(tf), value=str(total))
-                st.markdown(delta_text, unsafe_allow_html=True)
-        else:
-            with stat_cols[i]: 
-                st.metric(label="Signals {}".format(tf), value="N/A")
-
-with st.expander("ℹ️ Configuration", expanded=False):
-    st.markdown("""
-    **Data Source:** OANDA v20 API (practice account)
-    **RSI Period:** 10 | **Source:** OHLC4
-    **Divergence:** Last 30 candles
-    """)
+    return pdf.output(dest='S').encode('latin-1')  # ← Important pour Streamlit
