@@ -137,43 +137,94 @@ def run_analysis_process():
 def create_pdf_report(results_data, last_scan_time):
     class PDF(FPDF):
         def header(self):
-            self.set_font('Arial', 'B', 14)
-            self.cell(0, 10, 'Rapport Screener RSI & Divergence', 0, 1, 'C')
-            self.set_font('Arial', '', 8)
+            self.set_font('Arial', 'B', 16)
+            self.set_text_color(0, 0, 0)
+            self.cell(0, 10, 'RAPPORT RSI & DIVERGENCE - ANALYSE QUOTIDIENNE', 0, 1, 'C')
+            self.set_font('Arial', '', 9)
+            self.set_text_color(80, 80, 80)
             self.cell(0, 5, 'Genere le: ' + str(last_scan_time), 0, 1, 'C')
-            self.ln(5)
+            self.ln(3)
         def footer(self):
             self.set_y(-15)
             self.set_font('Arial', 'I', 8)
-            self.cell(0, 10, 'Page ' + str(self.page_no()), 0, 0, 'C')
+            self.set_text_color(100, 100, 100)
+            self.cell(0, 10, 'Page ' + str(self.page_no()) + ' | Source: OANDA v20 API', 0, 0, 'C')
     
     pdf = PDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
-    color_header_bg = (51, 58, 73)
-    color_oversold_bg = (255, 75, 75)
-    color_overbought_bg = (61, 153, 112)
-    color_neutral_bg = (22, 26, 29)
-    color_neutral_text = (192, 192, 192)
+    # Couleurs VIVES
+    color_header = (30, 60, 114)
+    color_oversold = (220, 20, 60)
+    color_overbought = (34, 139, 34)
+    color_warning = (255, 140, 0)
+    color_neutral = (245, 245, 245)
+    color_text_dark = (20, 20, 20)
     
-    pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 8, 'GUIDE DE LECTURE', 0, 1, 'L')
-    pdf.set_font('Arial', '', 9)
+    # SECTION 1: RESUME EXECUTIF
+    pdf.set_font('Arial', 'B', 13)
+    pdf.set_fill_color(*color_header)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 10, ' RESUME EXECUTIF ', 0, 1, 'L', True)
     pdf.ln(2)
-    pdf.cell(0, 5, 'RSI (Relative Strength Index):', 0, 1, 'L')
-    pdf.cell(0, 5, '  - RSI < 30 : Zone de SURVENTE (potentiel rebond haussier)', 0, 1, 'L')
-    pdf.cell(0, 5, '  - RSI > 70 : Zone de SURACHAT (potentiel rebond baissier)', 0, 1, 'L')
-    pdf.cell(0, 5, '  - RSI entre 30-70 : Zone NEUTRE', 0, 1, 'L')
-    pdf.ln(2)
-    pdf.cell(0, 5, 'Divergences:', 0, 1, 'L')
-    pdf.cell(0, 5, '  - (BULL) = Divergence Haussiere : Prix baisse mais RSI monte', 0, 1, 'L')
-    pdf.cell(0, 5, '  - (BEAR) = Divergence Baissiere : Prix monte mais RSI baisse', 0, 1, 'L')
-    pdf.ln(2)
-    pdf.cell(0, 5, 'Timeframes: H1=1h | H4=4h | Daily=Journalier | Weekly=Hebdomadaire', 0, 1, 'L')
+    
+    # Calculer metriques globales
+    all_rsi_values = []
+    oversold_count = 0
+    overbought_count = 0
+    bull_div_count = 0
+    bear_div_count = 0
+    
+    for row in results_data:
+        for tf in TIMEFRAMES_DISPLAY:
+            d = row.get(tf, {})
+            rsi = d.get('rsi', np.nan)
+            div = d.get('divergence', 'Aucune')
+            if pd.notna(rsi):
+                all_rsi_values.append(rsi)
+                if rsi <= 30: oversold_count += 1
+                elif rsi >= 70: overbought_count += 1
+            if div == 'Haussière': bull_div_count += 1
+            elif div == 'Baissière': bear_div_count += 1
+    
+    avg_rsi = np.mean(all_rsi_values) if all_rsi_values else 50
+    total_signals = oversold_count + overbought_count
+    
+    pdf.set_font('Arial', 'B', 10)
+    pdf.set_text_color(*color_text_dark)
+    pdf.cell(70, 8, 'RSI MOYEN GLOBAL:', 0, 0, 'L')
+    pdf.set_font('Arial', '', 10)
+    
+    if avg_rsi < 40:
+        pdf.set_text_color(*color_oversold)
+        market_bias = "BEARISH (survente)"
+    elif avg_rsi > 60:
+        pdf.set_text_color(*color_overbought)
+        market_bias = "BULLISH (surachat)"
+    else:
+        pdf.set_text_color(*color_text_dark)
+        market_bias = "NEUTRE"
+    
+    pdf.cell(0, 8, '{:.1f} - Biais marche: {}'.format(avg_rsi, market_bias), 0, 1, 'L')
+    
+    pdf.set_text_color(*color_text_dark)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(70, 6, 'TOTAL SIGNAUX ACTIFS:', 0, 0, 'L')
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(0, 6, '{} ({} survente, {} surachat)'.format(total_signals, oversold_count, overbought_count), 0, 1, 'L')
+    
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(70, 6, 'DIVERGENCES DETECTEES:', 0, 0, 'L')
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(0, 6, '{} haussiere, {} baissiere'.format(bull_div_count, bear_div_count), 0, 1, 'L')
     pdf.ln(5)
     
-    pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 8, 'SYNTHESE DES SIGNAUX', 0, 1, 'L')
+    # SECTION 2: ANALYSE PAR TIMEFRAME
+    pdf.set_font('Arial', 'B', 13)
+    pdf.set_fill_color(*color_header)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 10, ' ANALYSE PAR TIMEFRAME ', 0, 1, 'L', True)
+    pdf.ln(2)
     
     stats_by_tf = {}
     for tf in TIMEFRAMES_DISPLAY:
@@ -181,18 +232,138 @@ def create_pdf_report(results_data, last_scan_time):
         valid_rsi = [d.get('rsi') for d in tf_data if pd.notna(d.get('rsi'))]
         oversold = sum(1 for x in valid_rsi if x <= 30)
         overbought = sum(1 for x in valid_rsi if x >= 70)
+        extreme_oversold = sum(1 for x in valid_rsi if x <= 20)
+        extreme_overbought = sum(1 for x in valid_rsi if x >= 80)
         bull_div = sum(1 for d in tf_data if d.get('divergence') == 'Haussière')
         bear_div = sum(1 for d in tf_data if d.get('divergence') == 'Baissière')
-        stats_by_tf[tf] = {'oversold': oversold, 'overbought': overbought, 'bull_div': bull_div, 'bear_div': bear_div}
+        avg = np.mean(valid_rsi) if valid_rsi else 50
+        stats_by_tf[tf] = {
+            'oversold': oversold, 'overbought': overbought,
+            'extreme_os': extreme_oversold, 'extreme_ob': extreme_overbought,
+            'bull_div': bull_div, 'bear_div': bear_div, 'avg': avg
+        }
+    
+    pdf.set_font('Arial', 'B', 9)
+    pdf.set_fill_color(*color_header)
+    pdf.set_text_color(255, 255, 255)
+    w = 35
+    pdf.cell(w, 8, 'TF', 1, 0, 'C', True)
+    pdf.cell(w, 8, 'RSI Moy', 1, 0, 'C', True)
+    pdf.cell(w, 8, 'Survente', 1, 0, 'C', True)
+    pdf.cell(w, 8, 'Surachat', 1, 0, 'C', True)
+    pdf.cell(w, 8, 'Extreme <20', 1, 0, 'C', True)
+    pdf.cell(w, 8, 'Extreme >80', 1, 0, 'C', True)
+    pdf.cell(w, 8, 'Div.Bull', 1, 0, 'C', True)
+    pdf.cell(w, 8, 'Div.Bear', 1, 1, 'C', True)
     
     pdf.set_font('Arial', '', 9)
-    for tf, stats in stats_by_tf.items():
-        line = '{}: {} survente | {} surachat | {} div.bull | {} div.bear'.format(tf, stats['oversold'], stats['overbought'], stats['bull_div'], stats['bear_div'])
-        pdf.cell(0, 6, line, 0, 1, 'L')
+    for tf, st in stats_by_tf.items():
+        pdf.set_text_color(*color_text_dark)
+        pdf.set_fill_color(*color_neutral)
+        pdf.cell(w, 7, tf, 1, 0, 'C', True)
+        
+        if st['avg'] < 40:
+            pdf.set_fill_color(255, 200, 200)
+        elif st['avg'] > 60:
+            pdf.set_fill_color(200, 255, 200)
+        else:
+            pdf.set_fill_color(*color_neutral)
+        pdf.cell(w, 7, '{:.1f}'.format(st['avg']), 1, 0, 'C', True)
+        
+        pdf.set_fill_color(255, 220, 220) if st['oversold'] > 0 else pdf.set_fill_color(*color_neutral)
+        pdf.cell(w, 7, str(st['oversold']), 1, 0, 'C', True)
+        
+        pdf.set_fill_color(220, 255, 220) if st['overbought'] > 0 else pdf.set_fill_color(*color_neutral)
+        pdf.cell(w, 7, str(st['overbought']), 1, 0, 'C', True)
+        
+        if st['extreme_os'] > 0:
+            pdf.set_fill_color(*color_oversold)
+            pdf.set_text_color(255, 255, 255)
+        else:
+            pdf.set_fill_color(*color_neutral)
+            pdf.set_text_color(*color_text_dark)
+        pdf.cell(w, 7, str(st['extreme_os']), 1, 0, 'C', True)
+        
+        if st['extreme_ob'] > 0:
+            pdf.set_fill_color(*color_overbought)
+            pdf.set_text_color(255, 255, 255)
+        else:
+            pdf.set_fill_color(*color_neutral)
+            pdf.set_text_color(*color_text_dark)
+        pdf.cell(w, 7, str(st['extreme_ob']), 1, 0, 'C', True)
+        
+        pdf.set_fill_color(*color_neutral)
+        pdf.set_text_color(*color_text_dark)
+        pdf.cell(w, 7, str(st['bull_div']), 1, 0, 'C', True)
+        pdf.cell(w, 7, str(st['bear_div']), 1, 1, 'C', True)
+    
     pdf.ln(5)
     
-    pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 8, 'OPPORTUNITES PRIORITAIRES (Top 10)', 0, 1, 'L')
+    # SECTION 3: CONVERGENCE MULTI-TIMEFRAME
+    pdf.set_font('Arial', 'B', 13)
+    pdf.set_fill_color(*color_header)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 10, ' CONVERGENCES MULTI-TIMEFRAME (Score de force) ', 0, 1, 'L', True)
+    pdf.ln(2)
+    
+    convergence_scores = []
+    for row in results_data:
+        oversold_tfs = []
+        overbought_tfs = []
+        for tf in TIMEFRAMES_DISPLAY:
+            rsi = row.get(tf, {}).get('rsi', np.nan)
+            if pd.notna(rsi):
+                if rsi <= 30: oversold_tfs.append(tf)
+                elif rsi >= 70: overbought_tfs.append(tf)
+        
+        if len(oversold_tfs) >= 2:
+            convergence_scores.append({
+                'asset': row['Devises'],
+                'type': 'SURVENTE',
+                'tfs': ', '.join(oversold_tfs),
+                'score': len(oversold_tfs)
+            })
+        elif len(overbought_tfs) >= 2:
+            convergence_scores.append({
+                'asset': row['Devises'],
+                'type': 'SURACHAT',
+                'tfs': ', '.join(overbought_tfs),
+                'score': len(overbought_tfs)
+            })
+    
+    convergence_scores.sort(key=lambda x: -x['score'])
+    
+    if convergence_scores:
+        pdf.set_font('Arial', '', 9)
+        pdf.set_text_color(*color_text_dark)
+        pdf.cell(0, 5, 'Actifs montrant des signaux concordants sur plusieurs timeframes:', 0, 1, 'L')
+        pdf.ln(1)
+        
+        for conv in convergence_scores[:10]:
+            if conv['type'] == 'SURVENTE':
+                pdf.set_fill_color(255, 200, 200)
+            else:
+                pdf.set_fill_color(200, 255, 200)
+            
+            pdf.cell(50, 6, conv['asset'], 1, 0, 'L', True)
+            pdf.cell(35, 6, conv['type'], 1, 0, 'C', True)
+            pdf.cell(80, 6, 'TF: ' + conv['tfs'], 1, 0, 'L', True)
+            pdf.set_fill_color(*color_warning)
+            pdf.set_text_color(255, 255, 255)
+            pdf.cell(20, 6, 'Score: ' + str(conv['score']), 1, 1, 'C', True)
+            pdf.set_text_color(*color_text_dark)
+    else:
+        pdf.set_font('Arial', 'I', 9)
+        pdf.cell(0, 6, 'Aucune convergence significative detectee', 0, 1, 'L')
+    
+    pdf.ln(5)
+    
+    # SECTION 4: TOP OPPORTUNITES
+    pdf.set_font('Arial', 'B', 13)
+    pdf.set_fill_color(*color_header)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 10, ' TOP 10 OPPORTUNITES (Score de priorite) ', 0, 1, 'L', True)
+    pdf.ln(2)
     
     opportunities = []
     for row in results_data:
@@ -203,192 +374,94 @@ def create_pdf_report(results_data, last_scan_time):
             if pd.notna(rsi_val):
                 priority = 0
                 signal = ""
-                if rsi_val <= 30:
+                if rsi_val <= 20:
+                    priority += 10
+                    signal = "SURVENTE EXTREME"
+                elif rsi_val <= 30:
                     priority += 5
                     signal = "SURVENTE"
+                elif rsi_val >= 80:
+                    priority += 10
+                    signal = "SURACHAT EXTREME"
                 elif rsi_val >= 70:
                     priority += 5
                     signal = "SURACHAT"
                 if divergence == 'Haussière':
-                    priority += 3
+                    priority += 5
                     signal = signal + " + DIV.BULL" if signal else "DIV.BULL"
                 elif divergence == 'Baissière':
-                    priority += 3
+                    priority += 5
                     signal = signal + " + DIV.BEAR" if signal else "DIV.BEAR"
                 if priority > 0:
-                    opportunities.append({'asset': row['Devises'], 'tf': tf, 'rsi': rsi_val, 'signal': signal, 'priority': priority})
+                    opportunities.append({
+                        'asset': row['Devises'], 'tf': tf, 'rsi': rsi_val,
+                        'signal': signal, 'priority': priority
+                    })
     
-    opportunities.sort(key=lambda x: (-x['priority'], x['rsi']))
+    opportunities.sort(key=lambda x: (-x['priority'], abs(50 - x['rsi'])))
     top_opps = opportunities[:10]
     
     if top_opps:
+        pdf.set_font('Arial', 'B', 9)
+        pdf.set_fill_color(*color_header)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(10, 8, '#', 1, 0, 'C', True)
+        pdf.cell(45, 8, 'Actif', 1, 0, 'C', True)
+        pdf.cell(20, 8, 'TF', 1, 0, 'C', True)
+        pdf.cell(25, 8, 'RSI', 1, 0, 'C', True)
+        pdf.cell(80, 8, 'Signal', 1, 0, 'C', True)
+        pdf.cell(20, 8, 'Score', 1, 1, 'C', True)
+        
         pdf.set_font('Arial', '', 9)
         for i, opp in enumerate(top_opps, 1):
-            line = '{}. {} ({}) - RSI: {:.2f} - Signal: {}'.format(i, opp['asset'], opp['tf'], opp['rsi'], opp['signal'])
-            pdf.cell(0, 6, line, 0, 1, 'L')
-    else:
-        pdf.set_font('Arial', 'I', 9)
-        pdf.cell(0, 6, 'Aucun signal prioritaire detecte', 0, 1, 'L')
-    pdf.ln(5)
-    
-    pdf.add_page()
-    pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 8, 'DONNEES DETAILLEES PAR ACTIF', 0, 1, 'L')
-    pdf.ln(2)
-    
-    pdf.set_font('Arial', 'B', 10)
-    pdf.set_fill_color(*color_header_bg)
-    pdf.set_text_color(234, 234, 234)
-    cell_width_pair = 50
-    cell_width_tf = (pdf.w - pdf.l_margin - pdf.r_margin - cell_width_pair) / len(TIMEFRAMES_DISPLAY)
-    pdf.cell(cell_width_pair, 10, 'Devises', 1, 0, 'C', True)
-    for tf in TIMEFRAMES_DISPLAY:
-        pdf.cell(cell_width_tf, 10, tf, 1, 0, 'C', True)
-    pdf.ln()
-    
-    pdf.set_font('Arial', '', 9)
-    for row in results_data:
-        pdf.set_fill_color(*color_neutral_bg)
-        pdf.set_text_color(234, 234, 234)
-        pdf.cell(cell_width_pair, 10, row['Devises'], 1, 0, 'L', True)
-        for tf_display_name in TIMEFRAMES_DISPLAY:
-            cell_data = row.get(tf_display_name, {'rsi': np.nan, 'divergence': 'Aucune'})
-            rsi_val = cell_data.get('rsi', np.nan)
-            divergence = cell_data.get('divergence', 'Aucune')
-            if pd.notna(rsi_val):
-                if rsi_val <= 20:
-                    pdf.set_fill_color(*color_oversold_bg)
-                    pdf.set_text_color(255, 255, 255)
-                elif rsi_val >= 80:
-                    pdf.set_fill_color(*color_overbought_bg)
-                    pdf.set_text_color(255, 255, 255)
-                else:
-                    pdf.set_fill_color(*color_neutral_bg)
-                    pdf.set_text_color(*color_neutral_text)
+            pdf.set_fill_color(*color_neutral)
+            pdf.set_text_color(*color_text_dark)
+            pdf.cell(10, 7, str(i), 1, 0, 'C', True)
+            pdf.cell(45, 7, opp['asset'], 1, 0, 'L', True)
+            pdf.cell(20, 7, opp['tf'], 1, 0, 'C', True)
+            
+            if opp['rsi'] <= 20:
+                pdf.set_fill_color(*color_oversold)
+                pdf.set_text_color(255, 255, 255)
+            elif opp['rsi'] >= 80:
+                pdf.set_fill_color(*color_overbought)
+                pdf.set_text_color(255, 255, 255)
+            elif opp['rsi'] <= 30:
+                pdf.set_fill_color(255, 200, 200)
+                pdf.set_text_color(*color_text_dark)
+            elif opp['rsi'] >= 70:
+                pdf.set_fill_color(200, 255, 200)
+                pdf.set_text_color(*color_text_dark)
             else:
-                pdf.set_fill_color(*color_neutral_bg)
-                pdf.set_text_color(*color_neutral_text)
-            formatted_val = format_rsi(rsi_val)
-            divergence_text = " (BULL)" if divergence == "Haussière" else (" (BEAR)" if divergence == "Baissière" else "")
-            cell_text = formatted_val + divergence_text
-            pdf.cell(cell_width_tf, 10, cell_text, 1, 0, 'C', True)
-        pdf.ln()
+                pdf.set_fill_color(*color_neutral)
+                pdf.set_text_color(*color_text_dark)
+            
+            pdf.cell(25, 7, '{:.2f}'.format(opp['rsi']), 1, 0, 'C', True)
+            
+            pdf.set_fill_color(*color_neutral)
+            pdf.set_text_color(*color_text_dark)
+            pdf.cell(80, 7, opp['signal'], 1, 0, 'L', True)
+            
+            pdf.set_fill_color(*color_warning)
+            pdf.set_text_color(255, 255, 255)
+            pdf.cell(20, 7, str(opp['priority']), 1, 1, 'C', True)
     
+    pdf.ln(3)
+    
+    # SECTION 5: DONNEES BRUTES
     pdf.add_page()
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(0, 10, 'SECTION ANALYSE IA', 0, 1, 'L')
-    pdf.set_font('Arial', '', 10)
+    pdf.set_font('Arial', 'B', 13)
+    pdf.set_fill_color(*color_header)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 10, ' DONNEES DETAILLEES (Toutes les paires) ', 0, 1, 'L', True)
     pdf.ln(2)
-    pdf.cell(0, 6, 'QUESTIONS POUR L\'IA:', 0, 1, 'L')
-    pdf.ln(2)
-    pdf.set_font('Arial', '', 9)
-    pdf.cell(0, 5, '1. Quelles sont les 3 meilleures opportunites de trading aujourd\'hui?', 0, 1, 'L')
-    pdf.cell(0, 5, '2. Y a-t-il des actifs avec signaux concordants sur plusieurs timeframes?', 0, 1, 'L')
-    pdf.cell(0, 5, '3. Quels actifs montrent des signaux contradictoires?', 0, 1, 'L')
-    pdf.cell(0, 5, '4. Quelle est la tendance generale du marche?', 0, 1, 'L')
-    pdf.cell(0, 5, '5. Y a-t-il des correlations inhabituelles?', 0, 1, 'L')
-    pdf.ln(5)
-    pdf.set_font('Arial', '', 10)
-    pdf.cell(0, 6, 'CONTEXTE A CONSIDERER:', 0, 1, 'L')
-    pdf.ln(2)
-    pdf.set_font('Arial', '', 9)
-    pdf.cell(0, 5, '- Calendrier economique du jour', 0, 1, 'L')
-    pdf.cell(0, 5, '- Decisions banques centrales', 0, 1, 'L')
-    pdf.cell(0, 5, '- Contexte geopolitique', 0, 1, 'L')
-    pdf.ln(5)
-    pdf.set_font('Arial', '', 10)
-    pdf.cell(0, 6, 'RECOMMANDATIONS & NOTES:', 0, 1, 'L')
-    pdf.ln(2)
-    pdf.set_font('Arial', '', 9)
-    pdf.cell(0, 5, '[Espace pour votre analyse quotidienne]', 0, 1, 'L')
     
-    return bytes(pdf.output())
-
-st.markdown('<h1 class="screener-header">Screener RSI & Divergence (OANDA)</h1>', unsafe_allow_html=True)
-
-if 'scan_done' in st.session_state and st.session_state.scan_done:
-    last_scan_time_str = st.session_state.last_scan_time.strftime("%Y-%m-%d %H:%M:%S")
-    st.markdown('<div class="update-info">🔄 Dernière mise à jour: {} (OANDA)</div>'.format(last_scan_time_str), unsafe_allow_html=True)
-
-col1, col2, col3 = st.columns([4, 1, 1])
-with col2:
-    if st.button("🔄 Rescan", use_container_width=True):
-        st.session_state.scan_done = False
-        st.cache_data.clear()
-        st.rerun()
-
-with col3:
-    if 'results' in st.session_state and st.session_state.results:
-        st.download_button(
-            label="📄 PDF",
-            data=create_pdf_report(st.session_state.results, st.session_state.last_scan_time.strftime("%d/%m/%Y %H:%M:%S")),
-            file_name="RSI_Report_{}.pdf".format(datetime.now().strftime('%Y%m%d_%H%M')),
-            mime="application/pdf",
-            use_container_width=True
-        )
-
-if 'scan_done' not in st.session_state or not st.session_state.scan_done:
-    if st.button("🚀 Lancer le scan", use_container_width=True):
-        with st.spinner("Scan en cours..."):
-            run_analysis_process()
-        st.success("Analyse terminée!")
-        st.rerun()
-    elif 'scan_done' in st.session_state and not st.session_state.scan_done:
-        with st.spinner("Scan en cours..."):
-            run_analysis_process()
-        st.success("Analyse terminée!")
-        st.rerun()
-
-if 'results' in st.session_state and st.session_state.results:
-    st.markdown("""<div class="legend-container">
-        <div class="legend-item"><div class="legend-dot oversold-dot"></div><span>Oversold (RSI ≤ 20)</span></div>
-        <div class="legend-item"><div class="legend-dot overbought-dot"></div><span>Overbought (RSI ≥ 80)</span></div>
-        <div class="legend-item"><span class="divergence-arrow bullish-arrow">↑</span><span>Bullish Divergence</span></div>
-        <div class="legend-item"><span class="divergence-arrow bearish-arrow">↓</span><span>Bearish Divergence</span></div>
-    </div>""", unsafe_allow_html=True)
-    
-    st.markdown("### 📈 RSI & Divergence Analysis Results")
-    html_table = '<table class="rsi-table"><thead><tr><th>Devises</th>'
-    for tf in TIMEFRAMES_DISPLAY: 
-        html_table += '<th>{}</th>'.format(tf)
-    html_table += '</tr></thead><tbody>'
-    
-    for row in st.session_state.results:
-        html_table += '<tr><td class="devises-cell">{}</td>'.format(row["Devises"])
-        for tf in TIMEFRAMES_DISPLAY:
-            cell_data = row.get(tf, {'rsi': np.nan, 'divergence': 'Aucune'})
-            rsi_val = cell_data.get('rsi', np.nan)
-            divergence = cell_data.get('divergence', 'Aucune')
-            css_class = get_rsi_class(rsi_val)
-            formatted_val = format_rsi(rsi_val)
-            divergence_icon = '<span class="divergence-arrow bullish-arrow">↑</span>' if divergence == "Haussière" else ('<span class="divergence-arrow bearish-arrow">↓</span>' if divergence == "Baissière" else "")
-            html_table += '<td class="{}">{} {}</td>'.format(css_class, formatted_val, divergence_icon)
-        html_table += '</tr>'
-    html_table += '</tbody></table>'
-    st.markdown(html_table, unsafe_allow_html=True)
-    
-    st.markdown("### 📊 Signal Statistics")
-    stat_cols = st.columns(len(TIMEFRAMES_DISPLAY))
-    for i, tf in enumerate(TIMEFRAMES_DISPLAY):
-        tf_data = [row.get(tf, {}) for row in st.session_state.results]
-        valid_rsi = [d.get('rsi') for d in tf_data if pd.notna(d.get('rsi'))]
-        bull_div = sum(1 for d in tf_data if d.get('divergence') == 'Haussière')
-        bear_div = sum(1 for d in tf_data if d.get('divergence') == 'Baissière')
-        if valid_rsi:
-            oversold = sum(1 for x in valid_rsi if x <= 20)
-            overbought = sum(1 for x in valid_rsi if x >= 80)
-            total = oversold + overbought + bull_div + bear_div
-            delta_text = "🔴 {} S | 🟢 {} B | ↑ {} | ↓ {}".format(oversold, overbought, bull_div, bear_div)
-            with stat_cols[i]:
-                st.metric(label="Signals {}".format(tf), value=str(total))
-                st.markdown(delta_text, unsafe_allow_html=True)
-        else:
-            with stat_cols[i]: 
-                st.metric(label="Signals {}".format(tf), value="N/A")
-
-with st.expander("ℹ️ Configuration", expanded=False):
-    st.markdown("""
-    **Data Source:** OANDA v20 API (practice account)
-    **RSI Period:** 10 | **Source:** OHLC4
-    **Divergence:** Last 30 candles
-    """)
+    pdf.set_font('Arial', 'B', 9)
+    pdf.set_fill_color(*color_header)
+    pdf.set_text_color(255, 255, 255)
+    cell_w_pair = 50
+    cell_w_tf = (pdf.w - pdf.l_margin - pdf.r_margin - cell_w_pair) / len(TIMEFRAMES_DISPLAY)
+    pdf.cell(cell_w_pair, 9, 'Actif', 1, 0, 'C', True)
+    for tf in TIMEFRAMES_DISPLAY:
+        pdf.cell(cell_w_tf, 9, tf, 1, 0, 'C', True)
+    pdf.ln()
