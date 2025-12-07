@@ -25,20 +25,20 @@ st.markdown("""
 <style>
     .main > div { padding-top: 2rem; }
     .screener-header { font-size: 28px; font-weight: bold; color: #FAFAFA; margin-bottom: 15px; text-align: center; }
-    .update-info { background-color: #262730; padding: 8px 15px; border-radius: 5px; margin-bottom: 20px; font-size: 14px; color: #A9A9A9; border: 1px solid #333A49; text-align: center; }
-    .legend-container { display: flex; justify-content: center; flex-wrap: wrap; gap: 25px; margin: 25px 0; padding: 15px; border-radius: 5px; background-color: #1A1C22; }
+    .update-info { background-color: #202225; padding: 8px 15px; border-radius: 5px; margin-bottom: 20px; font-size: 14px; color: #A9A9A9; border: 1px solid #111315; text-align: center; }
+    .legend-container { display: flex; justify-content: center; flex-wrap: wrap; gap: 25px; margin: 25px 0; padding: 15px; border-radius: 5px; background-color: #0F1113; }
     .legend-item { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #D3D3D3; }
     .legend-dot { width: 12px; height: 12px; border-radius: 50%; }
     .oversold-dot { background-color: #FF4B4B; }
     .overbought-dot { background-color: #3D9970; }
     h3 { color: #EAEAEA; text-align: center; margin-top: 30px; margin-bottom: 15px; }
     .rsi-table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; box-shadow: 0 4px 8px 0 rgba(0,0,0,0.1); }
-    .rsi-table th { background-color: #333A49; color: #EAEAEA !important; padding: 14px 10px; text-align: center; font-weight: bold; font-size: 15px; border: 1px solid #262730; }
-    .rsi-table td { padding: 12px 10px; text-align: center; border: 1px solid #262730; font-size: 14px; }
+    .rsi-table th { background-color: #151617; color: #EAEAEA !important; padding: 14px 10px; text-align: center; font-weight: bold; font-size: 15px; border: 1px solid #0E0F11; }
+    .rsi-table td { padding: 12px 10px; text-align: center; border: 1px solid #0E0F11; font-size: 14px; }
     .devises-cell { font-weight: bold !important; color: #E0E0E0 !important; font-size: 15px !important; text-align: left !important; padding-left: 15px !important; }
-    .oversold-cell { background-color: rgba(255, 75, 75, 0.7) !important; color: white !important; font-weight: bold; }
-    .overbought-cell { background-color: rgba(61, 153, 112, 0.7) !important; color: white !important; font-weight: bold; }
-    .neutral-cell { color: #C0C0C0 !important; background-color: #161A1D; }
+    .oversold-cell { background-color: rgba(255, 75, 75, 0.85) !important; color: white !important; font-weight: bold; }
+    .overbought-cell { background-color: rgba(61, 153, 112, 0.85) !important; color: white !important; font-weight: bold; }
+    .neutral-cell { color: #C0C0C0 !important; background-color: #0B0C0D; }
     .divergence-arrow { font-size: 20px; font-weight: bold; vertical-align: middle; margin-left: 6px; }
     .bullish-arrow { color: #3D9970; }
     .bearish-arrow { color: #FF4B4B; }
@@ -192,13 +192,15 @@ def create_pdf_report(results_data, last_scan_time):
         pdf = PDF(orientation='L', unit='mm', format='A4')
         pdf.add_page()
 
-        color_header_bg = (51, 58, 73)
-        color_oversold_bg = (255, 75, 75)
-        color_overbought_bg = (61, 153, 112)
-        color_neutral_bg = (22, 26, 29)
-        color_neutral_text = (192, 192, 192)
+        # --- Couleurs DARK plus prononcées ---
+        color_header_bg = (30, 33, 36)        # Header très sombre
+        color_oversold_bg = (180, 40, 40)     # Rouge foncé
+        color_overbought_bg = (25, 110, 80)   # Vert foncé
+        color_neutral_bg = (15, 17, 19)       # Fond neutre très dark
+        color_neutral_text = (220, 220, 220)  # Texte gris clair pour contraste
 
         pdf.set_font('Arial', 'B', 11)
+        pdf.set_text_color(*color_neutral_text)
         pdf.cell(0, 8, 'GUIDE DE LECTURE', 0, 1, 'L')
         pdf.set_font('Arial', '', 9)
         pdf.ln(2)
@@ -278,7 +280,7 @@ def create_pdf_report(results_data, last_scan_time):
         pdf.add_page()
         pdf.set_font('Arial', 'B', 10)
         pdf.set_fill_color(*color_header_bg)
-        pdf.set_text_color(234, 234, 234)
+        pdf.set_text_color(*color_neutral_text)
         cell_width_pair = 50
         cell_width_tf = (pdf.w - pdf.l_margin - pdf.r_margin - cell_width_pair) / len(TIMEFRAMES_DISPLAY)
         pdf.cell(cell_width_pair, 10, 'Devises', 1, 0, 'C', True)
@@ -289,7 +291,7 @@ def create_pdf_report(results_data, last_scan_time):
 
         for row in results_data:
             pdf.set_fill_color(*color_neutral_bg)
-            pdf.set_text_color(234, 234, 234)
+            pdf.set_text_color(*color_neutral_text)
             pdf.cell(cell_width_pair, 10, row['Devises'], 1, 0, 'L', True)
             for tf_display_name in TIMEFRAMES_DISPLAY:
                 cell_data = row.get(tf_display_name, {'rsi': np.nan, 'divergence': 'Aucune'})
@@ -314,19 +316,52 @@ def create_pdf_report(results_data, last_scan_time):
                 pdf.cell(cell_width_tf, 10, cell_text, 1, 0, 'C', True)
             pdf.ln()
 
+        # --- SECTION ANALYSE IA (info exploitables, pas des questions) ---
         pdf.add_page()
         pdf.set_font('Arial', 'B', 12)
-        pdf.cell(0, 10, 'SECTION ANALYSE IA', 0, 1, 'L')
+        pdf.cell(0, 10, 'SECTION ANALYSE IA - INFORMATIONS UTILES', 0, 1, 'L')
+
         pdf.set_font('Arial', '', 10)
         pdf.ln(2)
-        pdf.cell(0, 6, 'QUESTIONS POUR L\'IA:', 0, 1, 'L')
-        pdf.ln(2)
+
+        pdf.multi_cell(0, 6,
+            "Cette section fournit à une IA des indications essentielles pour interpréter les "
+            "résultats du screener RSI & Divergence. Elle ne contient pas de questions mais des données "
+            "opérationnelles permettant une analyse avancée et automatique."
+        )
+
+        pdf.ln(4)
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(0, 6, "📌 Informations clés à exploiter :", 0, 1, 'L')
         pdf.set_font('Arial', '', 9)
-        pdf.cell(0, 5, '1. Quelles sont les 3 meilleures opportunites de trading aujourd\'hui?', 0, 1, 'L')
-        pdf.cell(0, 5, '2. Y a-t-il des actifs avec signaux concordants sur plusieurs timeframes?', 0, 1, 'L')
-        pdf.cell(0, 5, '3. Quels actifs montrent des signaux contradictoires?', 0, 1, 'L')
-        pdf.cell(0, 5, '4. Quelle est la tendance generale du marche?', 0, 1, 'L')
-        pdf.cell(0, 5, '5. Y a-t-il des correlations inhabituelles?', 0, 1, 'L')
+
+        pdf.multi_cell(0, 6,
+            "- Plus un actif présente un RSI extrême (<=20 ou >=80), plus la probabilité d'un retournement "
+            "ou d'une extension de tendance est significative.\n"
+            "- Les divergences haussières renforcent les signaux de survente ; les divergences baissières "
+            "renforcent les signaux de surachat.\n"
+            "- Les signaux confirmés sur plusieurs timeframes ont une fiabilité supérieure.\n"
+            "- Les signaux contradictoires entre timeframes indiquent des zones de transition ou de "
+            "consolidation.\n"
+            "- Les indices majeurs (US30, NAS100, SPX500) influencent fortement les devises liées au "
+            "risk-on/risk-off : AUD, NZD, JPY.\n"
+            "- L’or (XAU/USD) et le franc suisse (CHF/JPY, USD/CHF) servent de valeurs refuges : une "
+            "survente ou surachat simultané sur plusieurs paires peut indiquer un changement macro global.\n"
+            "- Les extrêmes RSI Weekly signalent des mouvements durables (swing ou long terme)."
+        )
+
+        pdf.ln(6)
+
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(0, 6, "🎯 Objectif pour l’IA :", 0, 1, 'L')
+        pdf.set_font('Arial', '', 9)
+
+        pdf.multi_cell(0, 6,
+            "Combiner les niveaux de RSI, les divergences et la cohérence multi-timeframes afin "
+            "de produire un résumé structuré des meilleures opportunités de trading, des zones de risques, "
+            "et des orientations probables du marché."
+        )
+
         pdf.ln(5)
 
         # Génération du PDF en bytes - gestion robuste selon type renvoyé par fpdf
