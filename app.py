@@ -7,7 +7,7 @@ import warnings
 from oandapyV20 import API
 import oandapyV20.endpoints.instruments as instruments
 from scipy.signal import find_peaks
-from fpdf import FPDF
+from fpdf2 import FPDF
 import concurrent.futures
 warnings.filterwarnings('ignore')
 
@@ -577,7 +577,7 @@ def create_pdf_report(results_data, last_scan_time):
     pdf.ln(2)
    
     pdf.set_font('Arial', '', 9)
-    pdf.multi_cell(0, 5, 'Pour chaque opportunite Top 5:\n\n1. Actif: _______________\n2. Score: ___ | RSI: ___ | Timeframe: ___\n3. Type signal: Survente / Surachat / Divergence\n4. Confluence TF: Oui / Non - Details: _______________\n5. Coherence avec biais marche:')
+    pdf.multi_cell(0, 5, 'Pour chaque opportunite Top 5:\n\n1. Actif: _______________\n2. Score: ___ | RSI: ___ | Timeframe: ___\n3. Type signal: Survente / Surachat / Divergence\n4. Confluence TF: Oui / Non - Details: _______________\n5. Coherence avec biais marche: Oui / Non')
 
     return bytes(pdf.output())
 
