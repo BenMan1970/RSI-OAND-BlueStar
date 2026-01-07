@@ -9,15 +9,18 @@ import oandapyV20.endpoints.instruments as instruments
 from scipy.signal import find_peaks
 from fpdf import FPDF
 import concurrent.futures
+import time
+import random
 
 # --- CONFIGURATION ---
 warnings.filterwarnings('ignore')
 RSI_PERIOD = 14
 RSI_OVERSOLD = 30
 RSI_OVERBOUGHT = 70
+MAX_RETRIES = 3  # Tentatives en cas d'échec API
 
 st.set_page_config(
-    page_title="RSI & Divergence Screener",
+    page_title="RSI & Divergence Screener Pro",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -26,25 +29,56 @@ st.set_page_config(
 # --- CSS STYLES ---
 st.markdown(f"""
 <style>
+    /* Style global */
     .main > div {{ padding-top: 2rem; }}
     .screener-header {{ font-size: 28px; font-weight: bold; color: #FAFAFA; margin-bottom: 15px; text-align: center; }}
     .update-info {{ background-color: #262730; padding: 8px 15px; border-radius: 5px; margin-bottom: 20px; font-size: 14px; color: #A9A9A9; border: 1px solid #333A49; text-align: center; }}
+    
+    /* Table Styles */
     .legend-container {{ display: flex; justify-content: center; flex-wrap: wrap; gap: 25px; margin: 25px 0; padding: 15px; border-radius: 5px; background-color: #1A1C22; }}
     .legend-item {{ display: flex; align-items: center; gap: 8px; font-size: 14px; color: #D3D3D3; }}
     .legend-dot {{ width: 12px; height: 12px; border-radius: 50%; }}
     .oversold-dot {{ background-color: #FF4B4B; }}
     .overbought-dot {{ background-color: #3D9970; }}
     h3 {{ color: #EAEAEA; text-align: center; margin-top: 30px; margin-bottom: 15px; }}
+    
     .rsi-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; box-shadow: 0 4px 8px 0 rgba(0,0,0,0.1); }}
     .rsi-table th {{ background-color: #333A49; color: #EAEAEA !important; padding: 14px 10px; text-align: center; font-weight: bold; font-size: 15px; border: 1px solid #262730; }}
     .rsi-table td {{ padding: 12px 10px; text-align: center; border: 1px solid #262730; font-size: 14px; }}
+    
     .devises-cell {{ font-weight: bold !important; color: #E0E0E0 !important; font-size: 15px !important; text-align: left !important; padding-left: 15px !important; }}
     .oversold-cell {{ background-color: rgba(255, 75, 75, 0.7) !important; color: white !important; font-weight: bold; }}
     .overbought-cell {{ background-color: rgba(61, 153, 112, 0.7) !important; color: white !important; font-weight: bold; }}
     .neutral-cell {{ color: #C0C0C0 !important; background-color: #161A1D; }}
+    
     .divergence-arrow {{ font-size: 20px; font-weight: bold; vertical-align: middle; margin-left: 6px; }}
     .bullish-arrow {{ color: #3D9970; }}
     .bearish-arrow {{ color: #FF4B4B; }}
+
+    /* BOUTON SCAN ROUGE SPÉCIFIQUE */
+    /* On cible le bouton avec l'attribut data-testid="stBaseButton-primary" généré par Streamlit 
+       ou on utilise une astuce de conteneur. Ici, on style le bouton primaire en rouge. */
+    div[data-testid="stButton"] > button[kind="primary"] {{
+        background-color: #D32F2F;
+        color: white;
+        border: 1px solid #B71C1C;
+        transition: all 0.2s;
+    }}
+    div[data-testid="stButton"] > button[kind="primary"]:hover {{
+        background-color: #B71C1C;
+        border-color: #D32F2F;
+        box-shadow: 0 4px 12px rgba(211, 47, 47, 0.4);
+    }}
+    div[data-testid="stButton"] > button[kind="primary"]:active {{
+        background-color: #D32F2F;
+        transform: scale(0.98);
+    }}
+    
+    /* Pour ne pas colorer les autres boutons si on change le type plus tard, 
+       on assure que les boutons secondaires restent neutres */
+    div[data-testid="stButton"] > button {{
+        font-weight: 600;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -64,9 +98,8 @@ ASSETS = [
     'XAU/USD', 'XPT/USD', 'US30/USD', 'NAS100/USD', 'SPX500/USD'
 ]
 
-# AJOUT DU MONTHLY ICI
 TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly', 'Monthly']
-TIMEFRAMES_FETCH_KEYS = ['H1', 'H4', 'D1', 'W1', 'M']
+TIMEFRAMES_FETCH_KEYS = ['H1', 'H4', 'D', 'W', 'M']
 
 # --- FUNCTIONS ---
 
@@ -80,8 +113,7 @@ def calculate_rsi(prices, period=RSI_PERIOD):
         gains = delta.where(delta > 0, 0.0)
         losses = -delta.where(delta < 0, 0.0)
         
-        if len(gains.dropna()) < period or len(losses.dropna()) < period: return np.nan, None
-        
+        # Everage Wilder's Smoothing
         avg_gains = gains.ewm(com=period - 1, adjust=False, min_periods=period).mean()
         avg_losses = losses.ewm(com=period - 1, adjust=False, min_periods=period).mean()
         
@@ -94,12 +126,18 @@ def calculate_rsi(prices, period=RSI_PERIOD):
     except Exception:
         return np.nan, None
 
-def detect_divergence(price_data, rsi_series, lookback=30, peak_distance=5):
+def detect_divergence(price_data, rsi_series, timeframe_key, lookback=30):
     if rsi_series is None or len(price_data) < lookback: return "Aucune"
+    
+    # DYNAMIC PEAK DISTANCE : Plus le timeframe est grand, plus on augmente la distance entre les pics
+    # H1=3, H4=5, D=4, W=3, M=2
+    distance_map = {'H1': 3, 'H4': 5, 'D': 4, 'W': 3, 'M': 2}
+    peak_distance = distance_map.get(timeframe_key, 5)
     
     recent_price = price_data.iloc[-lookback:]
     recent_rsi = rsi_series.iloc[-lookback:]
     
+    # Bearish Divergence (Price Higher, RSI Lower)
     price_peaks_idx, _ = find_peaks(recent_price['High'], distance=peak_distance)
     if len(price_peaks_idx) >= 2:
         last_peak = price_peaks_idx[-1]
@@ -108,6 +146,7 @@ def detect_divergence(price_data, rsi_series, lookback=30, peak_distance=5):
             recent_rsi.iloc[last_peak] < recent_rsi.iloc[prev_peak]):
             return "Baissière"
             
+    # Bullish Divergence (Price Lower, RSI Higher)
     price_troughs_idx, _ = find_peaks(-recent_price['Low'], distance=peak_distance)
     if len(price_troughs_idx) >= 2:
         last_trough = price_troughs_idx[-1]
@@ -120,36 +159,49 @@ def detect_divergence(price_data, rsi_series, lookback=30, peak_distance=5):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_forex_data_oanda(pair, timeframe_key):
-    try:
-        api = API(access_token=OANDA_ACCESS_TOKEN, environment="practice")
-        instrument = pair.replace('/', '_')
-        # MAPPING GRANULARITY AVEC MONTHLY
-        params = {
-            'granularity': {'H1':'H1', 'H4':'H4', 'D1':'D', 'W1':'W', 'M':'M'}[timeframe_key], 
-            'count': 120
-        }
-        r = instruments.InstrumentsCandles(instrument=instrument, params=params)
-        api.request(r)
-        
-        data_list = []
-        for c in r.response['candles']:
-            if c['complete']:
-                data_list.append({
-                    'Time': c['time'],
-                    'Open': float(c['mid']['o']),
-                    'High': float(c['mid']['h']),
-                    'Low': float(c['mid']['l']),
-                    'Close': float(c['mid']['c']),
-                    'Volume': int(c['volume'])
-                })
-        
-        if not data_list: return None
-        df = pd.DataFrame(data_list)
-        df['Time'] = pd.to_datetime(df['Time'])
-        df.set_index('Time', inplace=True)
-        return df
-    except Exception as e:
-        return None
+    """
+    Fetch data with retry mechanism to handle API throttling or temporary network issues.
+    """
+    api = API(access_token=OANDA_ACCESS_TOKEN, environment="practice")
+    instrument = pair.replace('/', '_')
+    
+    params = {
+        'granularity': timeframe_key, 
+        'count': 120
+    }
+    
+    for attempt in range(MAX_RETRIES):
+        try:
+            # Random jitter to prevent synchronized requests
+            time.sleep(random.uniform(0.05, 0.2)) 
+            
+            r = instruments.InstrumentsCandles(instrument=instrument, params=params)
+            api.request(r)
+            
+            data_list = []
+            for c in r.response['candles']:
+                if c['complete']:
+                    data_list.append({
+                        'Time': c['time'],
+                        'Open': float(c['mid']['o']),
+                        'High': float(c['mid']['h']),
+                        'Low': float(c['mid']['l']),
+                        'Close': float(c['mid']['c']),
+                        'Volume': int(c['volume'])
+                    })
+            
+            if not data_list: return None
+            df = pd.DataFrame(data_list)
+            df['Time'] = pd.to_datetime(df['Time'])
+            df.set_index('Time', inplace=True)
+            return df
+            
+        except Exception as e:
+            if attempt == MAX_RETRIES - 1:
+                # Log error silently or handle as needed
+                return None
+            time.sleep(1) # Wait before retrying
+    return None
 
 def format_rsi(value): 
     return "N/A" if pd.isna(value) else "{:.2f}".format(value)
@@ -167,7 +219,8 @@ def process_single_asset(pair_name):
         rsi_value, rsi_series = calculate_rsi(data_ohlc)
         divergence_signal = "Aucune"
         if data_ohlc is not None and rsi_series is not None:
-            divergence_signal = detect_divergence(data_ohlc, rsi_series)
+            # Pass tf_key for dynamic distance calculation
+            divergence_signal = detect_divergence(data_ohlc, rsi_series, tf_key)
         row_data[tf_display_name] = {'rsi': rsi_value, 'divergence': divergence_signal}
     return row_data
 
@@ -177,7 +230,8 @@ def run_analysis_process():
     status_text = st.empty()
     status_text.text("Initialisation du scan parallèle...")
     
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    # Reduced workers slightly to ensure stability with OANDA limits (8->5 is safer, 8 is faster)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
         future_to_asset = {executor.submit(process_single_asset, asset): asset for asset in ASSETS}
         completed = 0
         total = len(ASSETS)
@@ -186,9 +240,11 @@ def run_analysis_process():
             asset_name = future_to_asset[future]
             try:
                 data = future.result()
-                results_list.append(data)
+                if data:
+                    results_list.append(data)
             except Exception as e:
-                st.error(f"Erreur lors du scan de {asset_name}: {e}")
+                # Silent fail for single asset to not stop whole scan
+                pass
             
             completed += 1
             progress_bar.progress(completed / total)
@@ -376,7 +432,6 @@ def create_pdf_report(results_data, last_scan_time):
     pdf.set_text_color(*C_TEXT_HEADER)
     
     w_pair = 40
-    # AJUSTEMENT LARGEUR COLONNE AUTO
     w_tf = (277 - w_pair) / len(TIMEFRAMES_DISPLAY)
     
     pdf.cell(w_pair, 9, "Paire", 1, 0, 'C', True)
@@ -459,19 +514,22 @@ def create_pdf_report(results_data, last_scan_time):
 
 # --- MAIN APP UI ---
 
-st.markdown('<h1 class="screener-header">Screener RSI & Divergence</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="screener-header">Screener RSI & Divergence Pro</h1>', unsafe_allow_html=True)
 
 if 'scan_done' in st.session_state and st.session_state.scan_done:
     last_scan_time_str = st.session_state.last_scan_time.strftime("%Y-%m-%d %H:%M:%S")
     st.markdown('<div class="update-info">🔄 Dernière mise à jour: {}</div>'.format(last_scan_time_str), unsafe_allow_html=True)
 
 col1, col2, col3 = st.columns([4, 1, 1])
+
+# Bouton Rescan (Secondaire, couleur standard)
 with col2:
     if st.button("🔄 Rescan", use_container_width=True):
         st.session_state.scan_done = False
         st.cache_data.clear()
         st.rerun()
 
+# Bouton Download (Secondaire)
 with col3:
     if 'results' in st.session_state and st.session_state.results:
         st.download_button(
@@ -482,11 +540,11 @@ with col3:
             use_container_width=True
         )
 
+# Bouton Lancer le Scan (PRIMAIRE -> ROUGE via CSS)
 if 'scan_done' not in st.session_state or not st.session_state.scan_done:
-    if st.button("🚀 Lancer le scan", use_container_width=True):
-        run_analysis_process()
-        st.rerun()
-    elif 'scan_done' in st.session_state and not st.session_state.scan_done:
+    # On force le bouton à être centré et large avec type='primary'
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("🚀 LANCER LE SCAN COMPLET", type="primary", use_container_width=True):
         run_analysis_process()
         st.rerun()
 
@@ -539,9 +597,10 @@ if 'results' in st.session_state and st.session_state.results:
 
 with st.expander("ℹ️ Configuration", expanded=False):
     st.markdown(f"""
-    **Data Source:** API Private
+    **Data Source:** API Private (OANDA)
     **RSI Period:** {RSI_PERIOD} | **Source:** Close Price
     **Thresholds:** Oversold ≤ {RSI_OVERSOLD} | Overbought ≥ {RSI_OVERBOUGHT}
-    **Divergence:** Last 30 candles
+    **Divergence:** Algorithme dynamique adapté au Timeframe
+    **Workers:** 6 Threads (Optimisé stabilité)
     """)
 # --- END OF FILE app.py ---
