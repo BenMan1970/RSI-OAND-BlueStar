@@ -56,8 +56,6 @@ st.markdown(f"""
     .bearish-arrow {{ color: #FF4B4B; }}
 
     /* BOUTON SCAN ROUGE SPÉCIFIQUE */
-    /* On cible le bouton avec l'attribut data-testid="stBaseButton-primary" généré par Streamlit 
-       ou on utilise une astuce de conteneur. Ici, on style le bouton primaire en rouge. */
     div[data-testid="stButton"] > button[kind="primary"] {{
         background-color: #D32F2F;
         color: white;
@@ -74,8 +72,6 @@ st.markdown(f"""
         transform: scale(0.98);
     }}
     
-    /* Pour ne pas colorer les autres boutons si on change le type plus tard, 
-       on assure que les boutons secondaires restent neutres */
     div[data-testid="stButton"] > button {{
         font-weight: 600;
     }}
@@ -481,33 +477,35 @@ def create_pdf_report(results_data, last_scan_time):
     pdf.set_text_color(*C_TEXT_DARK)
     
     pdf.set_font('Arial', 'B', 14)
-    pdf.cell(0, 10, "GUIDE D'ANALYSE POUR ASSISTANT IA (CONTEXTE LLM)", 0, 1, 'L')
+    pdf.cell(0, 10, "GUIDE D'INTERPRETATION STRATEGIQUE (Contexte LLM & Trading Desk)", 0, 1, 'L')
     pdf.ln(5)
     
     pdf.set_font('Arial', '', 10)
-    pdf.multi_cell(0, 6, """Ce document est genere automatiquement pour servir de base a une analyse financiere assistee par IA. Voici les regles strictes d'interpretation des donnees ci-dessus :
+    pdf.multi_cell(0, 6, """Ce rapport agrège des données quantitatives pour assister la prise de décision. Les règles d'interprétation sont les suivantes :
 
 1. HIERARCHIE DES SIGNAUX (SCORING)
-   - Priorite Absolue : Un RSI < 20 ou > 80 est une anomalie statistique majeure. Cela indique un mouvement de panique (vente) ou d'euphorie (achat). Le retour a la moyenne est probable a court terme.
-   - Le "Combo en Or" : Une Divergence + un RSI Extreme sur le meme Timeframe. Probabilite de retournement > 80%.
-   - Concordance des Temps : Si H1, H4 et Daily sont tous en zone de survente (ou tous en surachat), le signal est renforce (Tendance lourde).
+   - Anomalie Statistique (Critère Majeur) : RSI < 20 ou > 80. Indique un état de panique ou d'euphorie extrême. Probabilité élevée de rebond (Mean Reversion).
+   - Confluence Haute Probabilité : Divergence + RSI Extrême sur la même unité de temps. Représente un signal de retournement de très haute fiabilité (>80%).
+   - Concordance Multitimeframe : Si H1, H4 et D1 sont alignés (ex: tous Surachetés), le signal est renforcé. La tendance est lourde et le momentum puissant.
 
-2. LECTURE DES TIMEFRAMES
-   - H1 (1 Heure) : Signal tactique pour entree immediate (Day Trading). Bruit de marche possible.
-   - H4 (4 Heures) : Signal Swing Trading. Plus fiable. Indique la tendance pour les 2-3 prochains jours.
-   - Weekly : Tendance de fond. Ne pas trader CONTRE un signal Weekly sauf pour du scalping tres court terme.
-   - Monthly : Vue d'investissement Long Terme. Un signal Monthly prend des mois a se construire.
+2. ANALYSE UNITES DE TEMPS (Timeframes)
+   - H1 (Intraday) : Exécution tactique. Signaux de court terme, sensibles au 'bruit' de marché.
+   - H4 (Swing) : Niveau de confirmation intermédiaire. Définit la tendance pour les 24-48h à venir.
+   - Weekly (Fondamental) : Tendance structurelle. Il est déconseillé de trader contre ce signal (sauf scalping agressif).
+   - Monthly (Investissement) : Vision macro-économique. Les signaux Monthly se développent sur plusieurs mois/semaines.
 
-3. GESTION DES CONFLITS
-   - Si H1 est SURVENTE mais Weekly est SURACHAT : C'est une correction dans une tendance haussiere (Buy the Dip).
-   - Si tous les Timeframes sont opposes : Marche en range ou indécis -> RESTER A L'ECART.
+3. GESTION DES CONFLITS DE TENDANCE
+   - Divergence de Temps (Ex: H1 Survente vs Weekly Surachat) : Interpréter comme une correction technique (Pullback) au sein d'une tendance haussière majeure (Opportunité 'Buy the Dip').
+   - Opposition Totale : Indice d'un marché sans tendance ('Range') ou de distribution. Aucun positionnement recommandé (Stay Flat).
 
-4. INTERPRETATION DES DIVERGENCES
-   - Divergence Haussiere (BULL) : Le prix fait un plus bas, mais le RSI monte. Indique un epuisement des vendeurs.
-   - Divergence Baissiere (BEAR) : Le prix fait un plus haut, mais le RSI descend. Indique un epuisement des acheteurs.
+4. TYPOLOGIE DES DIVERGENCES
+   - Bullish Divergence (Haussière) : Prix fait plus bas (LL) mais RSI fait plus haut (HL). Indicateur clé d'épuisement des vendeurs.
+   - Bearish Divergence (Baissière) : Prix fait plus haut (HH) mais RSI fait plus bas (LH). Signal d'affaiblissement des acheteurs.
 
-5. BIAIS GLOBAL
-   - Utiliser le 'RSI Moyen Global' en page 1 pour determiner si le dollar (USD) ou le Yen (JPY) dominent le marche. Si tout est rouge, chercher quelle devise est le denominateur commun.
+5. BIAIS GLOBAL & MACRO
+   - Le 'RSI Moyen Global' (Page 1) identifie la devise dominante. Si le marché est globalement Suracheté, vérifiez quelle devise est le dénominateur commun pour comprendre le moteur du mouvement.
+
+DISCLAIMER : L'analyse technique est une étude de probabilités, pas une certitude. Toujours coupler ces signaux avec une gestion des risques rigoureuse (Stop Loss, Position Sizing).
 """)
     
     return bytes(pdf.output())
