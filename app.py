@@ -101,7 +101,7 @@ ASSETS = [
     # Metals
     'XAU/USD', 'XAG/USD', 'XPT/USD',
     # Indices
-    'US30/USD', 'NAS100/USD', 'SPX500/USD', 'DE30/USD',
+    'US30/USD', 'NAS100/USD', 'SPX500/USD', 'DE30/EUR',  # 'DE40/EUR' si DE30/EUR ne fonctionne pas
 ]
 
 TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly', 'Monthly']
