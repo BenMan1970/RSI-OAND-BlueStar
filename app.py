@@ -88,10 +88,20 @@ except KeyError:
 
 # --- ASSETS CONFIG ---
 ASSETS = [
-    'EUR/USD', 'USD/JPY', 'GBP/USD', 'USD/CHF', 'AUD/USD', 'USD/CAD', 'NZD/USD', 
-    'EUR/JPY', 'GBP/JPY', 'AUD/JPY', 'NZD/JPY', 'CAD/JPY', 'CHF/JPY', 
-    'EUR/GBP', 'EUR/AUD', 'EUR/CAD', 'EUR/NZD', 'EUR/CHF', 
-    'XAU/USD', 'XPT/USD', 'US30/USD', 'NAS100/USD', 'SPX500/USD'
+    # Majors USD
+    'EUR/USD', 'USD/JPY', 'GBP/USD', 'USD/CHF', 'AUD/USD', 'USD/CAD', 'NZD/USD',
+    # JPY Crosses
+    'EUR/JPY', 'GBP/JPY', 'AUD/JPY', 'NZD/JPY', 'CAD/JPY', 'CHF/JPY',
+    # EUR Crosses
+    'EUR/GBP', 'EUR/AUD', 'EUR/CAD', 'EUR/NZD', 'EUR/CHF',
+    # GBP Crosses
+    'GBP/AUD', 'GBP/CAD', 'GBP/CHF', 'GBP/NZD',
+    # AUD / NZD / CAD / CHF Crosses
+    'AUD/CAD', 'AUD/CHF', 'AUD/NZD', 'NZD/CAD', 'NZD/CHF', 'CAD/CHF',
+    # Metals
+    'XAU/USD', 'XAG/USD', 'XPT/USD',
+    # Indices
+    'US30/USD', 'NAS100/USD', 'SPX500/USD', 'DE30/USD',
 ]
 
 TIMEFRAMES_DISPLAY = ['H1', 'H4', 'Daily', 'Weekly', 'Monthly']
