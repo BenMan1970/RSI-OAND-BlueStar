@@ -1,4 +1,11 @@
 # --- START OF FILE app.py ---
+# v2.0 — Suppression Top 15 du PDF
+# [FIX] Section "TOP 15 OPPORTUNITES PRIORITAIRES" retirée de l'export PDF
+#       → le scoring algorithmique interne (score /9, labels SURACHAT/DIV.BEAR)
+#         ne figure plus dans le document livré au LLM
+#       → PDF commence directement par les statistiques par TF puis le tableau complet
+#       → Tout le reste est identique à v1.0
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -227,6 +234,11 @@ def run_analysis_process():
 
 
 # --- PDF GENERATION ---
+# [FIX v2.0] Section Top 15 supprimée.
+# Le PDF contient uniquement :
+#   Page 1 — Résumé global (biais marché, RSI moyen, compteurs divergences)
+#           + Statistiques par TF
+#           + Tableau complet paires × TF avec valeurs RSI et tags (BULL)/(BEAR)
 def create_pdf_report(results_data, last_scan_time):
     class PDF(FPDF):
         def header(self):
@@ -246,13 +258,14 @@ def create_pdf_report(results_data, last_scan_time):
     pdf = PDF(orientation='L', unit='mm', format='A4')
     pdf.set_auto_page_break(auto=True, margin=15)
 
-    C_BG_HEADER   = (44, 62, 80)
+    C_BG_HEADER  = (44, 62, 80)
     C_TEXT_HEADER = (255, 255, 255)
-    C_OVERSOLD    = (220, 20, 60)
-    C_OVERBOUGHT  = (0, 180, 80)
-    C_NEUTRAL_BG  = (240, 240, 240)
-    C_TEXT_DARK   = (10, 10, 10)
+    C_OVERSOLD   = (220, 20, 60)
+    C_OVERBOUGHT = (0, 180, 80)
+    C_NEUTRAL_BG = (240, 240, 240)
+    C_TEXT_DARK  = (10, 10, 10)
 
+    # --- Calcul des métriques globales ---
     all_rsi_values           = []
     total_bull_div           = 0
     total_bear_div           = 0
@@ -277,7 +290,10 @@ def create_pdf_report(results_data, last_scan_time):
     else:                     market_bias = "NEUTRE / INCERTAIN"
     bias_color = C_OVERSOLD if avg_global_rsi < 45 else (C_OVERBOUGHT if avg_global_rsi > 55 else (100, 100, 100))
 
+    # --- PAGE 1 : Résumé global + Stats TF + Tableau complet ---
     pdf.add_page()
+
+    # Bloc résumé global
     pdf.set_fill_color(245, 247, 250)
     pdf.rect(10, 25, 277, 35, 'F')
     pdf.set_xy(15, 30)
@@ -293,52 +309,7 @@ def create_pdf_report(results_data, last_scan_time):
     pdf.cell(0, 6, f"Divergences: {total_bull_div} Haussieres (BULL) vs {total_bear_div} Baissieres (BEAR)", 0, 1, 'L')
     pdf.ln(15)
 
-    pdf.set_font('Arial', 'B', 14)
-    pdf.set_fill_color(*C_BG_HEADER)
-    pdf.set_text_color(*C_TEXT_HEADER)
-    pdf.cell(0, 10, ' TOP 15 OPPORTUNITES PRIORITAIRES (Scoring Algo)', 0, 1, 'L', True)
-    pdf.ln(2)
-
-    opportunities = []
-    for row in results_data:
-        for tf in TIMEFRAMES_DISPLAY:
-            cell_data  = row.get(tf, {})
-            rsi_val    = cell_data.get('rsi', np.nan)
-            divergence = cell_data.get('divergence', 'Aucune')
-            if pd.notna(rsi_val):
-                score = 0; signal_type = ""
-                if rsi_val <= 20:   score += 10; signal_type = "SURVENTE EXTREME"
-                elif rsi_val <= 30: score += 5;  signal_type = "SURVENTE"
-                elif rsi_val >= 80: score += 10; signal_type = "SURACHAT EXTREME"
-                elif rsi_val >= 70: score += 5;  signal_type = "SURACHAT"
-                if divergence == 'Haussière':  score += 4; signal_type += " + DIV.BULL"
-                elif divergence == 'Baissière': score += 4; signal_type += " + DIV.BEAR"
-                if score > 0:
-                    opportunities.append({'asset': row['Devises'], 'tf': tf,
-                                          'rsi': rsi_val, 'signal': signal_type, 'score': score})
-
-    opportunities.sort(key=lambda x: (-x['score'], abs(50 - x['rsi'])))
-    top_15 = opportunities[:15]
-
-    pdf.set_font('Arial', 'B', 9)
-    pdf.set_fill_color(220, 220, 220)
-    pdf.set_text_color(*C_TEXT_DARK)
-    for lbl, w in [("#", 15), ("Actif", 30), ("TF", 20), ("RSI", 25), ("Score", 20), ("Signal Detecte", 0)]:
-        pdf.cell(w, 8, lbl, 1, 0, 'C', True)
-    pdf.ln()
-    pdf.set_font('Arial', '', 10)
-    for i, opp in enumerate(top_15, 1):
-        if "SURVENTE" in opp['signal']:   pdf.set_text_color(*C_OVERSOLD)
-        elif "SURACHAT" in opp['signal']: pdf.set_text_color(*C_OVERBOUGHT)
-        else:                              pdf.set_text_color(*C_TEXT_DARK)
-        pdf.cell(15, 8, str(i), 1, 0, 'C')
-        pdf.cell(30, 8, opp['asset'], 1, 0, 'C')
-        pdf.cell(20, 8, opp['tf'], 1, 0, 'C')
-        pdf.cell(25, 8, f"{opp['rsi']:.2f}", 1, 0, 'C')
-        pdf.cell(20, 8, str(opp['score']), 1, 0, 'C')
-        pdf.cell(0,  8, opp['signal'], 1, 1, 'L')
-
-    pdf.add_page()
+    # Statistiques par TF
     pdf.set_text_color(*C_TEXT_DARK)
     pdf.set_font('Arial', 'B', 12)
     pdf.cell(0, 8, "STATISTIQUES PAR TIMEFRAME", 0, 1, 'L')
@@ -355,6 +326,7 @@ def create_pdf_report(results_data, last_scan_time):
         pdf.cell(0, 6, f"[{tf}] :: <20: {c_eos} | <30: {c_os} || >80: {c_eob} | >70: {c_ob} || DIV.BULL: {c_bull} | DIV.BEAR: {c_bear}", 0, 1, 'L')
     pdf.ln(5)
 
+    # Tableau complet paires × TF
     pdf.set_font('Arial', 'B', 10)
     pdf.set_fill_color(*C_BG_HEADER)
     pdf.set_text_color(*C_TEXT_HEADER)
