@@ -1,11 +1,3 @@
-# --- START OF FILE app.py ---
-# v2.0 — Suppression Top 15 du PDF
-# [FIX] Section "TOP 15 OPPORTUNITES PRIORITAIRES" retirée de l'export PDF
-#       → le scoring algorithmique interne (score /9, labels SURACHAT/DIV.BEAR)
-#         ne figure plus dans le document livré au LLM
-#       → PDF commence directement par les statistiques par TF puis le tableau complet
-#       → Tout le reste est identique à v1.0
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -18,6 +10,7 @@ from fpdf import FPDF
 import concurrent.futures
 import time
 import random
+import json
 
 # --- CONFIGURATION ---
 warnings.filterwarnings('ignore')
@@ -233,6 +226,23 @@ def run_analysis_process():
     progress_bar.empty()
 
 
+def create_json_export(results_data):
+    """
+    Aplatit les résultats imbriqués en une liste de records plats.
+    Une ligne par paire, colonnes RSI_<TF> et DIV_<TF> pour chaque timeframe.
+    """
+    records = []
+    for row in results_data:
+        record = {"Devises": row["Devises"]}
+        for tf in TIMEFRAMES_DISPLAY:
+            cell = row.get(tf, {})
+            rsi  = cell.get("rsi", np.nan)
+            record[f"RSI_{tf}"]  = round(float(rsi), 2) if pd.notna(rsi) else None
+            record[f"DIV_{tf}"]  = cell.get("divergence", "Aucune")
+        records.append(record)
+    return json.dumps(records, ensure_ascii=False, indent=2).encode("utf-8")
+
+
 # --- PDF GENERATION ---
 # [FIX v2.0] Section Top 15 supprimée.
 # Le PDF contient uniquement :
@@ -370,7 +380,7 @@ if 'scan_done' in st.session_state and st.session_state.scan_done:
     last_scan_time_str = st.session_state.last_scan_time.strftime("%Y-%m-%d %H:%M:%S")
     st.markdown('<div class="update-info">Dernière mise à jour: {}</div>'.format(last_scan_time_str), unsafe_allow_html=True)
 
-col1, col2, col3 = st.columns([4, 1, 1])
+col1, col2, col3, col4 = st.columns([4, 1, 1, 1])
 with col2:
     if st.button("Rescan", use_container_width=True):
         st.session_state.scan_done = False
@@ -386,6 +396,15 @@ with col3:
             ),
             file_name="RSI_Report_{}.pdf".format(datetime.now().strftime('%Y%m%d_%H%M')),
             mime="application/pdf",
+            use_container_width=True
+        )
+with col4:
+    if 'results' in st.session_state and st.session_state.results:
+        st.download_button(
+            label="JSON",
+            data=create_json_export(st.session_state.results),
+            file_name="RSI_Report_{}.json".format(datetime.now().strftime('%Y%m%d_%H%M')),
+            mime="application/json",
             use_container_width=True
         )
 
@@ -453,3 +472,4 @@ with st.expander("Configuration", expanded=False):
     **Assets:** {len(ASSETS)} instruments (liste canonique)
     """)
 # --- END OF FILE app.py ---
+  
