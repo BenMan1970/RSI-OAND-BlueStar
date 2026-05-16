@@ -574,7 +574,7 @@ def run_analysis_process():
         'scan_done':      True,
         'stats':          stats,
         'pdf_data':       create_pdf_report(results_list, stats, scan_ts_s),
-        'json_data':      create_json_export(results_list),
+        'json_data':      create_json_export(results_list, stats, scan_ts),
         'csv_data':       create_csv_export(results_list),
     }
     st.session_state.update(new_state)
@@ -588,6 +588,7 @@ def run_analysis_process():
 # =============================================================================
 
 def _flatten_results(results_data):
+    """Structure plate pour l'export CSV uniquement."""
     records = []
     for row in results_data:
         record = {"Devises": row["Devises"], "Status": row.get("Status", "OK")}
@@ -600,8 +601,115 @@ def _flatten_results(results_data):
     return records
 
 
-def create_json_export(results_data):
-    return json.dumps(_flatten_results(results_data), ensure_ascii=False, indent=2).encode("utf-8")
+# Mapping interne FR → enum neutre pour le JSON LLM
+_DIV_ENUM = {"Haussière": "BULL", "Baissière": "BEAR", "Aucune": "NONE"}
+
+# Clé fetch OANDA → label display pour les timeframes dans le JSON
+_TF_KEY_MAP = {display: fetch for display, fetch in TIMEFRAMES}
+
+
+def _market_status(scan_ts):
+    """
+    Statut simplifié basé sur le jour de la semaine (UTC).
+    Samedi (5) et dimanche (6) → fermé pour le Forex.
+    Suffisant pour contextualiser le JSON sans appel API supplémentaire.
+    """
+    weekday = scan_ts.weekday()
+    if weekday == 5:
+        return "closed_saturday"
+    elif weekday == 6:
+        return "closed_sunday"
+    return "open"
+
+
+def create_json_export(results_data, stats, scan_ts):
+    """
+    Export JSON enrichi, optimisé pour exploitation par un LLM.
+
+    Structure :
+    - meta     : paramètres du scan (timestamp ISO, période RSI, seuils, statut marché)
+    - summary  : agrégats pré-calculés (biais, RSI moyen, divergences, extrêmes par TF)
+    - instruments : données imbriquées par timeframe avec enums neutres (BULL/BEAR/NONE)
+
+    Les valeurs de divergence sont normalisées en enum anglais invariant pour
+    éviter toute dépendance linguistique lors du chaînage de prompts.
+    Les agrégats du bloc summary sont directement issus de compute_statistics()
+    — aucun recalcul nécessaire côté LLM.
+    """
+    # --- Bloc meta ---
+    meta = {
+        "scan_ts":       scan_ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "rsi_period":    RSI_PERIOD,
+        "thresholds": {
+            "oversold":    RSI_OVERSOLD,
+            "overbought":  RSI_OVERBOUGHT,
+            "extreme_low": 20,
+            "extreme_high": 80,
+        },
+        "market_status": _market_status(scan_ts),
+        "instruments_count": len(results_data),
+        "timeframes": TIMEFRAMES_FETCH_KEYS,
+    }
+
+    # --- Bloc summary (depuis stats pré-calculées) ---
+    by_tf_summary = {}
+    for tf in TIMEFRAMES_DISPLAY:
+        s = stats["by_tf"][tf]
+        fetch_key = _TF_KEY_MAP[tf]
+        by_tf_summary[fetch_key] = {
+            "extreme_oversold":   s["extreme_oversold"],
+            "oversold":           s["oversold"],
+            "overbought":         s["overbought"],
+            "extreme_overbought": s["extreme_overbought"],
+            "div_bull":           s["bull_div"],
+            "div_bear":           s["bear_div"],
+            "valid_count":        s["valid_count"],
+        }
+
+    # Biais : extraire le mot-clé court (BEARISH / BULLISH / NEUTRAL)
+    raw_bias = stats["market_bias"]
+    if "BEARISH" in raw_bias:
+        bias_key = "BEARISH"
+    elif "BULLISH" in raw_bias:
+        bias_key = "BULLISH"
+    else:
+        bias_key = "NEUTRAL"
+
+    summary = {
+        "market_bias":   bias_key,
+        "avg_rsi":       round(stats["avg_rsi"], 2),
+        "total_div_bull": stats["total_bull_div"],
+        "total_div_bear": stats["total_bear_div"],
+        "total_extremes": stats["extreme_count"],
+        "by_timeframe":  by_tf_summary,
+    }
+
+    # --- Bloc instruments (structure imbriquée) ---
+    instruments_out = []
+    for row in results_data:
+        tf_data = {}
+        for tf_display, tf_fetch in TIMEFRAMES:
+            cell = row.get(tf_display, {})
+            rsi  = cell.get("rsi", np.nan)
+            div  = cell.get("divergence", "Aucune")
+            tf_data[tf_fetch] = {
+                "rsi": round(float(rsi), 2) if pd.notna(rsi) else None,
+                "div": _DIV_ENUM.get(div, "NONE"),
+            }
+
+        instruments_out.append({
+            "pair":       row["Devises"],
+            "status":     row.get("Status", "OK"),
+            "timeframes": tf_data,
+        })
+
+    payload = {
+        "meta":        meta,
+        "summary":     summary,
+        "instruments": instruments_out,
+    }
+
+    return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
 
 
 def create_csv_export(results_data):
