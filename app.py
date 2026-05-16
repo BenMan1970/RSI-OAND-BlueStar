@@ -7,6 +7,7 @@ import threading
 import logging
 from oandapyV20 import API
 import oandapyV20.endpoints.instruments as instruments
+from oandapyV20.exceptions import V20Error          # FIX [RETRY] : import explicite pour distinguer erreurs fatales vs retryables
 from scipy.signal import find_peaks
 from fpdf import FPDF
 import concurrent.futures
@@ -78,11 +79,20 @@ st.markdown("""
 
 # --- SECRETS OANDA ---
 try:
-    OANDA_ACCOUNT_ID   = st.secrets["OANDA_ACCOUNT_ID"]
+    OANDA_ACCOUNT_ID   = st.secrets["OANDA_ACCOUNT_ID"]   # lu pour validation ; non utilisé dans les appels instruments
     OANDA_ACCESS_TOKEN = st.secrets["OANDA_ACCESS_TOKEN"]
     OANDA_ENVIRONMENT  = st.secrets.get("OANDA_ENVIRONMENT", "practice")
 except KeyError:
     st.error("Secrets non trouvés ! Vérifiez votre fichier .streamlit/secrets.toml")
+    st.stop()
+
+# FIX [ENV] : whitelist stricte — une typo ne connecte plus silencieusement
+# au compte live (rate-limits différents, token exposé à un endpoint différent).
+if OANDA_ENVIRONMENT not in ("practice", "live"):
+    st.error(
+        f"OANDA_ENVIRONMENT invalide : '{OANDA_ENVIRONMENT}'. "
+        "Valeurs acceptées : 'practice' ou 'live'."
+    )
     st.stop()
 
 # ===================== ASSETS — LISTE CANONIQUE 33 INSTRUMENTS =====================
@@ -97,10 +107,7 @@ ASSETS = [
 
 RESTRICTED_ASSETS = {'DE30/EUR', 'SPX500/USD', 'NAS100/USD', 'US30/USD', 'XAU/USD'}
 
-# FIX [BUG-002 / BUG-dérive liste parallèle] : source canonique unique en tuples
-# (display_name, fetch_key) — TIMEFRAMES_DISPLAY et TIMEFRAMES_FETCH_KEYS sont
-# dérivés automatiquement. Toute modification n'a lieu qu'ici, sans risque de
-# désalignement silencieux entre les deux listes.
+# Source canonique unique en tuples (display_name, fetch_key)
 TIMEFRAMES = [
     ('H1',     'H1'),
     ('H4',     'H4'),
@@ -121,16 +128,10 @@ ASSET_ORDER = {a: i for i, a in enumerate(ASSETS)}
 
 @st.cache_resource
 def get_oanda_semaphore():
-    # Sémaphore global au process — intentionnel : OANDA a une limite de taux
-    # par compte, pas par session. Ce sémaphore garantit ≤3 requêtes simultanées
-    # quelle que soit le nombre d'utilisateurs connectés au même process.
+    # Sémaphore global au process — OANDA limite par compte, pas par session.
     return threading.Semaphore(3)
 
 
-# FIX [BUG-010] : client OANDA singleton via @st.cache_resource.
-# Évite la création de 165 sessions TCP par scan (1 par appel cache-miss).
-# Le client est partagé entre toutes les sessions du process — thread-safe
-# car oandapyV20.API n'a pas d'état mutable entre requêtes.
 @st.cache_resource
 def get_oanda_client():
     return API(
@@ -146,19 +147,13 @@ def get_oanda_client():
 
 def calculate_rsi(prices, period=RSI_PERIOD):
     """
-    RSI Wilder — implémentation rigoureuse avec seed SMA correct.
+    RSI Wilder — seed SMA correct + gestion explicite de tous les cas limites.
 
-    FIX [BUG-003] : l'ancienne version utilisait EWM(com=period-1, adjust=False)
-    sans seed SMA préalable. Le lissage Wilder exige :
-      1. Seed = moyenne simple (SMA) sur les `period` premiers deltas.
-      2. Lissage récursif : avg = (avg * (period-1) + val) / period.
-    L'EWM sans seed produit un RSI biaisé de ±5-15 pts sur les séries courtes
-    (ex : Monthly avec 24 bougies et period=14 → seulement 10 pts utiles).
-
-    Cas limites conservés :
-    - avg_gain==0 et avg_loss==0 (marché plat) → RSI=50 (neutre)
-    - avg_gain>0  et avg_loss==0               → RSI=100 (correct)
-    - données insuffisantes (< period+1)        → np.nan
+    Cas limites :
+    - avg_gain == 0 et avg_loss == 0  (marché plat)  → RSI = 50
+    - avg_gain >  0 et avg_loss == 0  (tendance pure) → RSI = 100
+    - avg_gain == 0 et avg_loss >  0  (chute pure)    → RSI = 0
+    - données insuffisantes (< period+1)              → np.nan
     """
     try:
         if prices is None or len(prices) < period + 1:
@@ -169,20 +164,22 @@ def calculate_rsi(prices, period=RSI_PERIOD):
         gains  = delta.clip(lower=0)
         losses = (-delta).clip(lower=0)
 
-        # Seed Wilder : SMA sur les `period` premiers deltas (indices 1..period)
+        # Seed Wilder : SMA sur les `period` premiers deltas
         avg_gain = gains.iloc[1:period + 1].mean()
         avg_loss = losses.iloc[1:period + 1].mean()
 
-        rsi_list = [np.nan] * period  # warm-up : NaN pour les period premières valeurs
+        rsi_list = [np.nan] * period
 
         for i in range(period, len(close_prices)):
             avg_gain = (avg_gain * (period - 1) + gains.iloc[i]) / period
             avg_loss = (avg_loss * (period - 1) + losses.iloc[i]) / period
 
             if avg_gain == 0 and avg_loss == 0:
-                rsi_list.append(50.0)   # marché plat : neutre
+                rsi_list.append(50.0)
             elif avg_loss == 0:
-                rsi_list.append(100.0)  # que des gains
+                rsi_list.append(100.0)
+            elif avg_gain == 0:
+                rsi_list.append(0.0)
             else:
                 rs = avg_gain / avg_loss
                 rsi_list.append(100.0 - 100.0 / (1.0 + rs))
@@ -201,34 +198,32 @@ def calculate_rsi(prices, period=RSI_PERIOD):
 
 def _get_price_delta(pair_name):
     """
-    FIX [BUG-006] : seuil MIN_PRICE_DELTA adapté au type d'instrument.
-    Un seuil unique 0.1% est incohérent : trop fin pour XAU (3000$),
-    trop large pour les paires JPY (niveaux ~100-160).
+    Seuil MIN_PRICE_DELTA adapté au type d'instrument.
     """
     if 'JPY' in pair_name:
-        return 0.0003   # paires JPY : niveaux ~100-160, sensibilité plus faible
+        return 0.0003
     elif 'XAU' in pair_name:
-        return 0.002    # or : volatilité structurelle plus haute
+        return 0.002
     elif any(idx in pair_name for idx in ('DE30', 'SPX500', 'NAS100', 'US30')):
-        return 0.003    # indices : très volatils, seuil plus haut
-    return 0.001        # forex majeur/mineur standard
+        return 0.003
+    return 0.001
 
 
 def detect_divergence(price_data, rsi_series, timeframe_key, pair_name=""):
     """
     Détection divergence avec lookback adaptatif par TF.
 
-    FIX [BUG-002] : rsi_series est réindexé sur l'index de price_data via
-    .reindex() avant le slicing. Évite le décalage d'indices si l'EWM a produit
-    une série légèrement plus courte (trous de marché, index non contigu).
+    FIX [DIVERGENCE-CLOSE] : utilisation du prix de clôture au lieu de High/Low.
+    Les mèches extrêmes (spikes) créent des pics sur High/Low sans que le RSI
+    ne réagisse, générant de faux signaux. Le Close reflète le consensus de la
+    bougie et s'aligne mieux avec la dynamique du RSI.
 
-    FIX [BUG-006] : MIN_PRICE_DELTA adaptatif par instrument via _get_price_delta().
+    FIX [PROMINENCE] : ajout d'un seuil de prominence adaptatif via np.std().
+    Sans ce paramètre, find_peaks capte du bruit de tick, particulièrement sur H1
+    et H4, produisant des divergences sur des micro-variations sans intérêt.
 
-    FIX [BUG-011] : rsi_window_max/min gère les slices vides et les NaN —
-    retourne np.nan au lieu de lever ValueError sur np.max([]).
-
-    PATCH [Gemini] : fenêtre de tolérance ±2 bougies autour du pic de prix.
-    PATCH [ChatGPT] : seuils MIN_RSI_DELTA pour filtrer les micro-variations.
+    Alignement index : rsi_series réindexé sur price_data via .reindex() pour
+    éviter tout décalage en cas de trous de marché.
     """
     if rsi_series is None or len(price_data) < 10:
         return "Aucune"
@@ -240,22 +235,22 @@ def detect_divergence(price_data, rsi_series, timeframe_key, pair_name=""):
     distance_map  = {'H1': 3, 'H4': 5, 'D': 4, 'W': 3, 'M': 2}
     peak_distance = distance_map.get(timeframe_key, 5)
 
-    # FIX [BUG-006] : seuil adaptatif par instrument
     MIN_PRICE_DELTA = _get_price_delta(pair_name)
     MIN_RSI_DELTA   = 2.0
 
     recent_price = price_data.iloc[-lookback:]
+    recent_rsi   = rsi_series.reindex(recent_price.index)
 
-    # FIX [BUG-002] : alignement explicite sur l'index de price_data
-    # avant de découper — corrige le décalage si rsi_series a des trous d'index.
-    recent_rsi = rsi_series.reindex(recent_price.index)
+    # FIX [DIVERGENCE-CLOSE] : Close au lieu de High/Low
+    price_close = recent_price['Close'].values
+    rsi_vals    = recent_rsi.values
+    n           = len(rsi_vals)
 
-    price_high = recent_price['High'].values
-    price_low  = recent_price['Low'].values
-    rsi_vals   = recent_rsi.values
-    n          = len(rsi_vals)
+    # FIX [PROMINENCE] : prominence proportionnelle à la dispersion des clôtures.
+    # Filtre les micro-pics sans intérêt analytique.
+    price_std      = np.std(price_close)
+    prominence_val = price_std * 0.5 if price_std > 0 else 0.0
 
-    # FIX [BUG-011] : protection contre slice vide et NaN
     def rsi_window_max(idx):
         lo = max(0, idx - 2)
         hi = min(n, idx + 3)
@@ -274,26 +269,32 @@ def detect_divergence(price_data, rsi_series, timeframe_key, pair_name=""):
         valid = window[~np.isnan(window)]
         return float(np.min(valid)) if len(valid) > 0 else np.nan
 
-    # --- Divergence baissière (higher high prix + lower high RSI) ---
-    price_peaks_idx, _ = find_peaks(price_high, distance=peak_distance)
+    # --- Divergence baissière (higher high prix clôture + lower high RSI) ---
+    price_peaks_idx, _ = find_peaks(
+        price_close,
+        distance=peak_distance,
+        prominence=prominence_val
+    )
     if len(price_peaks_idx) >= 2:
         pp, lp = price_peaks_idx[-2], price_peaks_idx[-1]
-        price_diff_ok = price_high[lp] > price_high[pp] * (1 + MIN_PRICE_DELTA)
+        price_diff_ok = price_close[lp] > price_close[pp] * (1 + MIN_PRICE_DELTA)
         rsi_max_lp    = rsi_window_max(lp)
         rsi_max_pp    = rsi_window_max(pp)
-        # FIX [BUG-011] : vérifier que les valeurs RSI sont valides avant comparaison
         if price_diff_ok and not (np.isnan(rsi_max_lp) or np.isnan(rsi_max_pp)):
             if rsi_max_lp < rsi_max_pp - MIN_RSI_DELTA:
                 return "Baissière"
 
-    # --- Divergence haussière (lower low prix + higher low RSI) ---
-    price_troughs_idx, _ = find_peaks(-price_low, distance=peak_distance)
+    # --- Divergence haussière (lower low prix clôture + higher low RSI) ---
+    price_troughs_idx, _ = find_peaks(
+        -price_close,
+        distance=peak_distance,
+        prominence=prominence_val
+    )
     if len(price_troughs_idx) >= 2:
         pt, lt = price_troughs_idx[-2], price_troughs_idx[-1]
-        price_diff_ok = price_low[lt] < price_low[pt] * (1 - MIN_PRICE_DELTA)
+        price_diff_ok = price_close[lt] < price_close[pt] * (1 - MIN_PRICE_DELTA)
         rsi_min_lt    = rsi_window_min(lt)
         rsi_min_pt    = rsi_window_min(pt)
-        # FIX [BUG-011] : idem
         if price_diff_ok and not (np.isnan(rsi_min_lt) or np.isnan(rsi_min_pt)):
             if rsi_min_lt > rsi_min_pt + MIN_RSI_DELTA:
                 return "Haussière"
@@ -308,19 +309,19 @@ def detect_divergence(price_data, rsi_series, timeframe_key, pair_name=""):
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_forex_data_oanda(pair, timeframe_key, cache_version=0):
     """
-    Fetch OANDA avec retry, timeout, rate-limit et gestion assets restreints.
+    Fetch OANDA avec retry sélectif, timeout, rate-limit et gestion assets restreints.
 
-    FIX [BUG-005] : le paramètre `cache_version` (int) est inclus dans la clé
-    de cache de @st.cache_data. Incrémenter st.session_state.cache_version
-    au Rescan invalide les entrées de CETTE session uniquement, sans purger
-    le cache global partagé avec les autres utilisateurs (.clear() supprimé).
+    FIX [RETRY] : distinction explicite erreurs fatales (4xx hors 429) vs retryables
+    (429, 5xx, timeout réseau). Une erreur 401/403 (token invalide) ne doit jamais
+    être retentée : elle retournerait None immédiatement au lieu de saturer
+    les rate-limits OANDA sur 3 tentatives inutiles.
 
-    FIX [BUG-010] : api_client récupéré via get_oanda_client() (singleton
-    @st.cache_resource) — une seule session TCP par process au lieu de 165.
+    FIX [BACKOFF] : backoff exponentiel avec jitter (min(60, 2^attempt) + random())
+    au lieu du sleep linéaire fixe 1.5*(attempt+1). Réduit les collisions de threads
+    sur OANDA lors des rafales d'erreurs.
 
-    PATCH [Claude] : sleep() avant le sémaphore, pas à l'intérieur.
-    PATCH [Qwen]   : accès défensif r.response.get('candles', []).
-    PATCH [Claude] : ttl=300s.
+    cache_version : incrémenté au Rescan pour invalider le cache de cette session
+    sans purger le cache global des autres utilisateurs.
     """
     count_map = CANDLE_COUNT_RESTRICTED if pair in RESTRICTED_ASSETS else CANDLE_COUNT
     count     = count_map.get(timeframe_key, 150)
@@ -328,7 +329,6 @@ def fetch_forex_data_oanda(pair, timeframe_key, cache_version=0):
     instrument = pair.replace('/', '_')
     params     = {'granularity': timeframe_key, 'count': count}
 
-    # FIX [BUG-010] : singleton — pas de nouvelle session TCP à chaque appel
     api_client      = get_oanda_client()
     oanda_semaphore = get_oanda_semaphore()
 
@@ -371,13 +371,32 @@ def fetch_forex_data_oanda(pair, timeframe_key, cache_version=0):
             df.set_index('Time', inplace=True)
             return df
 
+        except V20Error as e:
+            # FIX [RETRY] : pas de retry sur erreurs d'authentification ou de
+            # paramètres invalides — échouer vite évite de saturer les rate-limits.
+            err_code = getattr(e, 'code', None)
+            if err_code in (400, 401, 403):
+                logger.error(
+                    "Fatal OANDA error %s for %s %s — aborting retries: %s",
+                    err_code, pair, timeframe_key, e
+                )
+                return None
+            # 429 (rate limit) et 5xx (server error) → retry avec backoff
+            logger.warning(
+                "fetch_forex_data_oanda attempt %d/%d V20Error %s for %s %s: %s",
+                attempt + 1, MAX_RETRIES, err_code, pair, timeframe_key, e
+            )
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(min(60, 2 ** attempt) + random.random())
+
         except Exception as e:
             logger.warning(
                 "fetch_forex_data_oanda attempt %d/%d failed for %s %s: %s",
                 attempt + 1, MAX_RETRIES, pair, timeframe_key, e
             )
             if attempt < MAX_RETRIES - 1:
-                time.sleep(1.5 * (attempt + 1))
+                # FIX [BACKOFF] : exponentiel avec jitter
+                time.sleep(min(60, 2 ** attempt) + random.random())
 
     logger.error("Fetch definitively failed for %s %s", pair, timeframe_key)
     return None
@@ -463,13 +482,11 @@ def compute_statistics(results_data):
 
 def process_single_asset(pair_name, cache_version=0):
     """
-    FIX [BUG-005] : cache_version transmis à fetch_forex_data_oanda pour
-    partitionner le cache par session sans .clear() global.
-
-    FIX [BUG-002] : pair_name transmis à detect_divergence pour le calcul
-    du MIN_PRICE_DELTA adaptatif par instrument.
-
-    PATCH [Qwen] : retourne un champ 'Status' ('OK' / 'PARTIAL' / 'ERROR').
+    FIX [ERROR-CONSISTENCY] : en cas d'exception, TOUS les timeframes sont
+    écrasés avec NaN — y compris ceux déjà calculés avant le crash. Un asset
+    en erreur ne doit jamais afficher de données partielles valides : l'utilisateur
+    ne peut pas distinguer un RSI H1 fiable d'un placeholder si le badge ⚠ERR
+    n'est pas immédiatement visible.
     """
     row_data = {'Devises': pair_name, 'Status': 'OK'}
     try:
@@ -491,9 +508,10 @@ def process_single_asset(pair_name, cache_version=0):
     except Exception as e:
         logger.exception("Crash in process_single_asset for %s: %s", pair_name, e)
         row_data['Status'] = 'ERROR'
+        # FIX [ERROR-CONSISTENCY] : écrasement de TOUS les TF (pas seulement
+        # les manquants) — cohérence garantie, aucune donnée partielle exposée.
         for tf_display, _ in TIMEFRAMES:
-            if tf_display not in row_data:
-                row_data[tf_display] = {'rsi': np.nan, 'divergence': 'Aucune'}
+            row_data[tf_display] = {'rsi': np.nan, 'divergence': 'Aucune'}
 
     return row_data
 
@@ -504,7 +522,6 @@ def run_analysis_process():
     status_text  = st.empty()
     status_text.text("Initialisation du scan parallèle...")
 
-    # FIX [BUG-005] : cache_version lu une seule fois avant le pool de threads
     cv = st.session_state.get('cache_version', 0)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
@@ -516,7 +533,13 @@ def run_analysis_process():
         total     = len(ASSETS)
 
         try:
-            for future in concurrent.futures.as_completed(future_to_asset, timeout=120):
+            # FIX [TIMEOUT] : 300s au lieu de 120s.
+            # Calcul réaliste : 33 assets × 5 TF = 165 appels, sémaphore=3,
+            # soit ~55 batches × (sleep 0.1s + latence OANDA ~1-2s) ≈ 110-165s
+            # en conditions normales. Avec retries et backoff exponentiel, les
+            # cas dégradés dépassent facilement 120s. 300s couvre les scénarios
+            # de cache froid sur réseau lent sans couper un scan valide.
+            for future in concurrent.futures.as_completed(future_to_asset, timeout=300):
                 asset_name = future_to_asset[future]
                 try:
                     data = future.result()
@@ -536,14 +559,11 @@ def run_analysis_process():
                 status_text.text(f"Scan terminé : {asset_name} ({completed}/{total})")
 
         except concurrent.futures.TimeoutError:
-            logger.error("Scan global timeout after 120s — %d/%d assets completed", completed, total)
-            st.warning(f"⏱ Timeout du scan après 120s — {completed}/{total} actifs traités.")
+            logger.error("Scan global timeout after 300s — %d/%d assets completed", completed, total)
+            st.warning(f"⏱ Timeout du scan après 300s — {completed}/{total} actifs traités.")
 
     results_list.sort(key=lambda x: ASSET_ORDER.get(x['Devises'], 999))
 
-    # FIX [BUG-001] : construction complète du nouvel état AVANT toute écriture
-    # dans st.session_state. Une écriture partielle suivie d'un rerun Streamlit
-    # exposait l'UI à un état incohérent (scan_done=True mais pdf_data=None).
     scan_ts   = datetime.now()
     stats     = compute_statistics(results_list)
     scan_ts_s = scan_ts.strftime("%d/%m/%Y %H:%M:%S")
@@ -557,7 +577,6 @@ def run_analysis_process():
         'json_data':      create_json_export(results_list),
         'csv_data':       create_csv_export(results_list),
     }
-    # Écriture groupée — fenêtre de vulnérabilité minimisée
     st.session_state.update(new_state)
 
     status_text.empty()
@@ -590,17 +609,12 @@ def create_csv_export(results_data):
     return df.to_csv(index=False).encode("utf-8-sig")
 
 
-# FIX [BUG-008] : _scan_ts passé en paramètre d'instance via __init__ au lieu
-# d'être un attribut de classe partagé entre toutes les instances. L'ancienne
-# approche (_scan_ts = classe) causait une race condition si deux utilisateurs
-# généraient un PDF simultanément : le second écrasait _scan_ts avant que le
-# premier ait terminé son rendu → horodatage incorrect dans le PDF du premier.
 class _ReportPDF(FPDF):
     """Classe PDF interne avec header/footer personnalisés."""
 
     def __init__(self, scan_ts="", **kwargs):
         super().__init__(**kwargs)
-        self._scan_ts = scan_ts  # instance, pas classe
+        self._scan_ts = scan_ts
 
     def header(self):
         self.set_font('Arial', 'B', 16)
@@ -623,10 +637,7 @@ class _ReportPDF(FPDF):
 
 
 def create_pdf_report(results_data, stats, last_scan_time):
-    """
-    Génération PDF avec stats pré-calculées.
-    FIX [BUG-008] : scan_ts injecté via __init__ (instance), plus d'attribut de classe.
-    """
+    """Génération PDF avec stats pré-calculées."""
     C_BG_HEADER   = (44,  62,  80)
     C_TEXT_HEADER = (255, 255, 255)
     C_OVERSOLD    = (220, 20,  60)
@@ -634,7 +645,6 @@ def create_pdf_report(results_data, stats, last_scan_time):
     C_NEUTRAL_BG  = (240, 240, 240)
     C_TEXT_DARK   = (10,  10,  10)
 
-    # FIX [BUG-008] : scan_ts en paramètre d'instance, pas attribut de classe
     pdf = _ReportPDF(scan_ts=str(last_scan_time), orientation='L', unit='mm', format='A4')
     pdf.set_auto_page_break(auto=True, margin=15)
 
@@ -746,11 +756,6 @@ col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
 with col2:
     if st.button("Rescan", use_container_width=True):
         st.session_state.scan_done = False
-        # FIX [BUG-005] : incrémenter cache_version invalide le cache de CETTE
-        # session uniquement, sans toucher au cache global des autres utilisateurs.
-        # La version est passée comme paramètre à fetch_forex_data_oanda, créant
-        # des entrées de cache distinctes par session.
-        # .clear() (qui purgeait tout) est volontairement supprimé.
         st.session_state.cache_version = st.session_state.get('cache_version', 0) + 1
         st.rerun()
 
@@ -852,8 +857,6 @@ if st.session_state.get('results'):
 
     st.markdown("### Signal Statistics")
 
-    # FIX [BUG-007] : accès explicite à session_state.stats sans opérateur `or`
-    # (un dict non-None mais vide est falsy → déclenchait un recalcul inattendu).
     stats = st.session_state.get('stats')
     if stats is None:
         stats = compute_statistics(st.session_state.get('results', []))
